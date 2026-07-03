@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (for example: v0.1.0). Leave empty for snapshot build.'
+        required: false
+        type: string
+      snapshot:
+        description: 'If true, build artifacts only (no GitHub Release and no image push).'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      version: ${{ steps.meta.outputs.version }}
+      publish_release: ${{ steps.meta.outputs.publish_release }}
+      push_images: ${{ steps.meta.outputs.push_images }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        name: Resolve release metadata
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            release_tag="${GITHUB_REF_NAME}"
+            publish_release=true
+            push_images=true
+          else
+            input_tag="${{ inputs.tag }}"
+            snapshot="${{ inputs.snapshot }}"
+            if [ -n "$input_tag" ]; then
+              case "$input_tag" in
+                v*) release_tag="$input_tag" ;;
+                *) release_tag="v$input_tag" ;;
+              esac
+              if [ "$snapshot" = "true" ]; then
+                publish_release=false
+                push_images=false
+              else
+                publish_release=true
+                push_images=true
+              fi
+            else
+              release_tag="v0.0.0-snapshot.${GITHUB_RUN_NUMBER}"
+              publish_release=false
+              push_images=false
+            fi
+          fi
+
+          version="${release_tag#v}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish_release=$publish_release" >> "$GITHUB_OUTPUT"
+          echo "push_images=$push_images" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: proxy/go.mod
+
+      - name: Build Linux binaries
+        # Asset names carry no version (the release tag does) so the stable
+        # `releases/latest/download/...` URLs used by cloud-init and deploy.sh
+        # keep working. Each binary gets a `.sha256` sidecar for checksum pinning.
+        run: |
+          mkdir -p dist
+          cd proxy
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -o "../dist/egress-proxy_linux_${arch}" .
+          done
+          cd ../dist
+          for arch in amd64 arm64; do
+            sha256sum "egress-proxy_linux_${arch}" > "egress-proxy_linux_${arch}.sha256"
+          done
+          sha256sum egress-proxy_linux_amd64 egress-proxy_linux_arm64 > SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-${{ steps.meta.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.meta.outputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          files: |
+            dist/egress-proxy_linux_amd64
+            dist/egress-proxy_linux_amd64.sha256
+            dist/egress-proxy_linux_arm64
+            dist/egress-proxy_linux_arm64.sha256
+            dist/SHA256SUMS
+          generate_release_notes: true
+
+  images:
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.push_images == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push proxy image
+        if: ${{ hashFiles('proxy/Dockerfile') != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: proxy
+          file: proxy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/alanta/azure-egress-proxy/proxy:${{ needs.build.outputs.version }}
+            ghcr.io/alanta/azure-egress-proxy/proxy:latest
+
+      - name: Build and push sample-app image
+        if: ${{ hashFiles('src/SampleApp/Dockerfile') != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/SampleApp/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/alanta/azure-egress-proxy/sample-app:${{ needs.build.outputs.version }}
+            ghcr.io/alanta/azure-egress-proxy/sample-app:latest

@@ -1,0 +1,5 @@
+azure-egress-proxy
+Copyright (c) 2026 Marnix van Valen
+
+The proxy in this repository embeds Smokescreen by Stripe
+(https://github.com/stripe/smokescreen), licensed under the MIT License.

@@ -1,0 +1,15 @@
+{
+  "modules": [
+    {
+      "id": "sample-app",
+      "appid": "11111111-1111-1111-1111-111111111111",
+      "allowed_hosts": [
+        "api.github.com"
+      ],
+      "action": "enforce"
+    }
+  ],
+  "fallback": {
+    "allowed_hosts": []
+  }
+}

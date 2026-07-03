@@ -1,0 +1,21 @@
+[Unit]
+Description=Egress proxy (managed allowlist mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=egress-proxy
+Group=egress-proxy
+EnvironmentFile=/etc/egress-proxy/egress-proxy.env
+ExecStart=/usr/local/bin/egress-proxy --config-file /etc/egress-proxy/config-managed.yaml
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/render
+
+[Install]
+WantedBy=multi-user.target

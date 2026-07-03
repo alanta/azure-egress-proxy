@@ -1,0 +1,96 @@
+name: Publish allowlist
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'allowlist/allowlist.json'
+      - 'allowlist/allowlist.schema.json'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate allowlist schema
+        run: |
+          python -m pip install --disable-pip-version-check --quiet jsonschema==4.23.0
+          python -m jsonschema --instance allowlist/allowlist.json allowlist/allowlist.schema.json
+
+      - id: preflight
+        name: Check Azure publish configuration
+        run: |
+          upload_enabled=true
+
+          if [ -z "${{ vars.AZURE_CLIENT_ID }}" ] || [ -z "${{ vars.AZURE_TENANT_ID }}" ] || [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ] || [ -z "${{ vars.ALLOWLIST_STORAGE_ACCOUNT }}" ]; then
+            echo "::notice::Azure OIDC variables and/or ALLOWLIST_STORAGE_ACCOUNT are missing; skipping upload."
+            upload_enabled=false
+          fi
+
+          echo "upload_enabled=$upload_enabled" >> "$GITHUB_OUTPUT"
+          echo "demo_url=${{ vars.DEMO_FRONTDOOR_URL }}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        if: steps.preflight.outputs.upload_enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upload allowlist blob
+        if: steps.preflight.outputs.upload_enabled == 'true'
+        run: |
+          az storage blob upload \
+            --overwrite \
+            --auth-mode login \
+            --account-name "${{ vars.ALLOWLIST_STORAGE_ACCOUNT }}" \
+            --container-name egress-config \
+            --name allowlist.json \
+            --file allowlist/allowlist.json
+
+      - name: Measure propagation at demo endpoint
+        if: steps.preflight.outputs.upload_enabled == 'true' && steps.preflight.outputs.demo_url != ''
+        run: |
+          demo_url="${{ steps.preflight.outputs.demo_url }}"
+          demo_url="${demo_url%/}"
+          start_epoch="$(date +%s)"
+          deadline=$((SECONDS + 300))
+          observed=false
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            allowed_code="$(curl -sS -o /tmp/allowlist-allowed.out -w '%{http_code}' "${demo_url}/try/allowed" || true)"
+            denied_code="$(curl -sS -o /tmp/allowlist-denied.out -w '%{http_code}' "${demo_url}/try/denied" || true)"
+
+            if [ "$allowed_code" -ge 200 ] && [ "$allowed_code" -lt 400 ] && [ "$denied_code" -ge 400 ]; then
+              observed=true
+              break
+            fi
+            sleep 10
+          done
+
+          if [ "$observed" != "true" ]; then
+            echo "::error::Allowlist propagation was not observable within 5 minutes."
+            echo "::error::Last /try/allowed status: $allowed_code"
+            echo "::error::Last /try/denied status: $denied_code"
+            exit 1
+          fi
+
+          end_epoch="$(date +%s)"
+          propagation_seconds="$((end_epoch - start_epoch))"
+          {
+            echo "## Allowlist propagation"
+            echo
+            echo "- Endpoint: \`${demo_url}\`"
+            echo "- Observed in: **${propagation_seconds}s**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip propagation probe when demo URL is unset
+        if: steps.preflight.outputs.upload_enabled == 'true' && steps.preflight.outputs.demo_url == ''
+        run: echo "::notice::DEMO_FRONTDOOR_URL repo variable is not set; skipping propagation probe."

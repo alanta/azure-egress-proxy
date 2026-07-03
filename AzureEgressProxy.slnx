@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AppHost/AppHost.csproj" />
+    <Project Path="src/EgressProxy.Client.Tests/EgressProxy.Client.Tests.csproj" />
+    <Project Path="src/EgressProxy.Client/EgressProxy.Client.csproj" />
+    <Project Path="src/SampleApp/SampleApp.csproj" />
+    <Project Path="src/ServiceDefaults/ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/src/AppHost/">
+    <Project Path="src/AppHost/AllowlistSeeder/AllowlistSeeder.csproj" />
+  </Folder>
+</Solution>

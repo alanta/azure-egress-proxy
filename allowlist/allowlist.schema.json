@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alanta/azure-egress-proxy/allowlist/allowlist.schema.json",
+  "title": "Egress proxy allowlist",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "modules"
+  ],
+  "properties": {
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/module"
+      }
+    },
+    "fallback": {
+      "description": "If omitted or empty, fallback is deny-all.",
+      "oneOf": [
+        {
+          "type": "object",
+          "maxProperties": 0
+        },
+        {
+          "$ref": "#/$defs/fallback"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "appid",
+        "allowed_hosts"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appid": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "subnet": {
+          "type": "string",
+          "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3})\\/(3[0-2]|[12]?[0-9])$"
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostname"
+          }
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "enforce",
+            "report",
+            "open"
+          ]
+        }
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_hosts"
+      ],
+      "properties": {
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostname"
+          }
+        }
+      }
+    },
+    "hostname": {
+      "type": "string",
+      "pattern": "^(?=.{1,253}$)(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\\.)+(?:[A-Za-z]{2,63})$"
+    }
+  }
+}

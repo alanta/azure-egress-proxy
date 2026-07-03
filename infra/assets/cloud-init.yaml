@@ -1,0 +1,70 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+
+write_files:
+  - path: /etc/egress-proxy/egress-proxy.env
+    owner: root:root
+    permissions: '0644'
+    content: |
+      SMOKESCREEN_ID_MODE=basic-jwt
+      JWKS_URL=__JWKS_URL__
+      EXPECT_ISS=__EXPECT_ISS__
+      EXPECT_AUD=__EXPECT_AUD__
+      AZURE_CLIENT_ID=__AZURE_CLIENT_ID__
+      ALLOWLIST_BLOB_URL=__ALLOWLIST_BLOB_URL__
+      POLL_SECONDS=__POLL_SECONDS__
+
+  - path: /etc/egress-proxy/config-managed.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ip: 0.0.0.0
+      port: 4750
+      acl_file: /render/acl.yaml
+      allow_missing_role: false
+      deny_ranges:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 169.254.0.0/16
+        - 127.0.0.0/8
+
+  - path: /etc/systemd/system/egress-proxy.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Egress proxy (managed allowlist mode)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=egress-proxy
+      Group=egress-proxy
+      EnvironmentFile=/etc/egress-proxy/egress-proxy.env
+      ExecStart=/usr/local/bin/egress-proxy --config-file /etc/egress-proxy/config-managed.yaml
+      Restart=always
+      RestartSec=2
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+      PrivateTmp=true
+      ReadWritePaths=/render
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /etc/egress-proxy /render
+  - id -u egress-proxy >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin egress-proxy
+  - chown -R egress-proxy:egress-proxy /render
+  - curl -fsSL "__PROXY_BINARY_URL__" -o /usr/local/bin/egress-proxy
+  - echo "__PROXY_BINARY_SHA256__  /usr/local/bin/egress-proxy" | sha256sum -c -
+  - chmod 0755 /usr/local/bin/egress-proxy
+  - systemctl daemon-reload
+  - systemctl enable --now egress-proxy.service

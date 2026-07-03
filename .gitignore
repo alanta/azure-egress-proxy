@@ -1,0 +1,17 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# IDE
+.idea/
+.vscode/
+
+# Generated deployment parameters (created by scripts/setup-identity.sh)
+*.generated.bicepparam
+*.generated.json
+.azure/
+
+# OS noise
+.DS_Store

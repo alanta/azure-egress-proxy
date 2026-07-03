@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      proxy: ${{ steps.filter.outputs.proxy }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
+      infra: ${{ steps.filter.outputs.infra }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      workflow: ${{ steps.filter.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            proxy:
+              - 'proxy/**'
+            dotnet:
+              - 'AzureEgressProxy.slnx'
+              - 'src/**'
+              - 'Directory.Build.*'
+              - 'global.json'
+              - 'NuGet.config'
+            infra:
+              - 'infra/**'
+            scripts:
+              - 'scripts/**/*.sh'
+            workflow:
+              - '.github/workflows/ci.yml'
+
+  proxy:
+    name: Build proxy image
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflow == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build proxy Docker image
+        run: |
+          if [ ! -d proxy ]; then
+            echo "::notice::proxy/ not present yet; skipping."
+            exit 0
+          fi
+          docker build proxy/
+
+  dotnet:
+    name: Build and test .NET solution
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.dotnet == 'true' || needs.changes.outputs.workflow == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build and test
+        run: |
+          if [ ! -f AzureEgressProxy.slnx ]; then
+            echo "::notice::AzureEgressProxy.slnx not present yet; skipping .NET build/test."
+            exit 0
+          fi
+          dotnet build AzureEgressProxy.slnx --configuration Release
+          dotnet test AzureEgressProxy.slnx --configuration Release --no-build
+
+  bicep:
+    name: Validate Bicep files
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.workflow == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Bicep templates
+        run: |
+          if [ ! -d infra ]; then
+            echo "::notice::infra/ not present yet; skipping Bicep validation."
+            exit 0
+          fi
+          if ! command -v az >/dev/null 2>&1; then
+            echo "::error::Azure CLI is required for az bicep build."
+            exit 1
+          fi
+          mapfile -t bicep_files < <(find infra -type f -name '*.bicep' | sort)
+          if [ "${#bicep_files[@]}" -eq 0 ]; then
+            echo "::notice::No .bicep files found under infra/."
+            exit 0
+          fi
+          for file in "${bicep_files[@]}"; do
+            az bicep build --file "$file"
+          done
+
+  shell:
+    name: Shell script lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.workflow == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck on scripts
+        run: |
+          if [ ! -d scripts ]; then
+            echo "::notice::scripts/ not present yet; skipping shellcheck."
+            exit 0
+          fi
+          mapfile -t script_files < <(find scripts -maxdepth 1 -type f -name '*.sh' | sort)
+          if [ "${#script_files[@]}" -eq 0 ]; then
+            echo "::notice::No shell scripts found under scripts/."
+            exit 0
+          fi
+          shellcheck "${script_files[@]}"

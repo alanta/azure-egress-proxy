@@ -1,0 +1,23 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.2.1">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>8d1acd07-82f6-433e-8bed-1fd0a93769eb</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SampleApp\SampleApp.csproj" />
+    <ProjectReference Include="AllowlistSeeder\AllowlistSeeder.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="AllowlistSeeder\**\*.cs" />
+    <Content Remove="AllowlistSeeder\**\*" />
+    <EmbeddedResource Remove="AllowlistSeeder\**\*" />
+    <None Remove="AllowlistSeeder\**\*" />
+  </ItemGroup>
+
+</Project>
