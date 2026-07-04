@@ -39,7 +39,7 @@ Set these repository variables in GitHub (`Settings -> Secrets and variables -> 
 | `AZURE_TENANT_ID` | Entra tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
 | `ALLOWLIST_STORAGE_ACCOUNT` | Storage account name that hosts `egress-config/allowlist.json` |
-| `DEMO_FRONTDOOR_URL` | Optional; public Front Door URL used by smoke/probe steps |
+| `DEMO_APP_URL` | Optional; public sample app URL used by smoke/probe steps |
 
 ## 4. Workflow expectations
 

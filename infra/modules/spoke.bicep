@@ -175,6 +175,11 @@ var appsNsgRules = [
       description: 'Egress floor: block direct internet.'
     }
   }
+  // ACA external ingress is delivered to the subnet through Azure's managed Front Door
+  // layer, so inbound traffic to the app arrives from the AzureFrontDoor.Backend service
+  // tag (post-DNAT on 31443). These rules are an ACA platform dependency for external
+  // ingress — NOT related to fronting the app with our own Front Door — so they stay even
+  // though the standalone Front Door profile was removed.
   {
     name: 'allow-afd-backend-443'
     properties: {
@@ -186,7 +191,7 @@ var appsNsgRules = [
       sourcePortRange: '*'
       destinationAddressPrefix: '*'
       destinationPortRange: '443'
-      description: 'Required for Front Door to ACA ingress.'
+      description: 'ACA external ingress delivery (managed Front Door layer).'
     }
   }
   {
@@ -286,7 +291,6 @@ module managedEnvironment 'br/public:avm/res/app/managed-environment:0.13.0' = {
 }
 
 var sampleAppName = '${namePrefix}-sample-app'
-var frontDoorProfileName = '${namePrefix}-afd'
 
 // The ACR is created by deploy.sh before this deployment runs (the image must exist
 // before the container app first pulls it), so it is referenced as existing here.
@@ -307,21 +311,6 @@ resource sampleAppAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' =
     principalId: sampleAppIdentity.outputs.principalId
     principalType: 'ServicePrincipal'
   }
-}
-
-// The Front Door <-> app circular dependency is broken by pointing Front Door at the
-// app's deterministic FQDN (<app>.<CAE default domain>) instead of the app's output, and
-// having the app read the deployed profile's frontDoorId GUID — the value Front Door
-// sends in X-Azure-FDID (NOT the ARM resource id). The read happens in a nested module
-// (not an `existing` reference here) so it only runs after the profile exists.
-module frontDoorId 'frontdoor-id.bicep' = {
-  name: 'front-door-id'
-  params: {
-    profileName: frontDoorProfileName
-  }
-  dependsOn: [
-    frontDoor
-  ]
 }
 
 module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
@@ -349,10 +338,9 @@ module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
         sampleAppIdentity.outputs.resourceId
       ]
     }
-    // "Only Front Door" ingress is enforced by (1) the subnet NSG inbound rules
-    // (AzureFrontDoor.Backend service tag on 443/31443) and (2) the app's X-Azure-FDID
-    // check. ACA ipSecurityRestrictions takes CIDRs only — it cannot express a service
-    // tag, so it is deliberately not used here.
+    // The app is reached directly on its ACA external ingress FQDN. This is a demo
+    // whose subject is egress control, so ingress is intentionally left open rather
+    // than fronted by Front Door / a WAF.
     // Scale to zero when idle (15 min cooldown) — this is a demo app, and a single
     // replica also keeps the proxy audit log to one source IP per revision.
     scaleSettings: {
@@ -381,10 +369,6 @@ module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
             value: '169.254.169.254,localhost,${managedEnvironment.outputs.defaultDomain},.${managedEnvironment.outputs.defaultDomain},.monitor.azure.com,.applicationinsights.azure.com,.livediagnostics.monitor.azure.com,.blob.core.windows.net'
           }
           {
-            name: 'FRONTDOOR_ID'
-            value: frontDoorId.outputs.frontDoorId
-          }
-          {
             // .NET config key EgressProxy:Audience — double underscore, not
             // SCREAMING_SNAKE (the app never reads EGRESS_PROXY_AUDIENCE).
             name: 'EgressProxy__Audience'
@@ -408,68 +392,10 @@ module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
   }
 }
 
-module frontDoor 'br/public:avm/res/cdn/profile:0.19.0' = {
-  name: 'front-door'
-  params: {
-    name: frontDoorProfileName
-    location: 'global'
-    sku: 'Standard_AzureFrontDoor'
-    originGroups: [
-      {
-        name: 'sample-origin-group'
-        loadBalancingSettings: {
-          sampleSize: 4
-          successfulSamplesRequired: 3
-          additionalLatencyInMilliseconds: 0
-        }
-        healthProbeSettings: {
-          probeIntervalInSeconds: 120
-          probePath: '/healthz'
-          probeProtocol: 'Https'
-          probeRequestType: 'HEAD'
-        }
-        origins: [
-          {
-            name: 'sample-app-origin'
-            // Deterministic app FQDN — must not reference the app module (cycle).
-            hostName: '${sampleAppName}.${managedEnvironment.outputs.defaultDomain}'
-            originHostHeader: '${sampleAppName}.${managedEnvironment.outputs.defaultDomain}'
-            httpsPort: 443
-            priority: 1
-            weight: 1000
-          }
-        ]
-      }
-    ]
-    afdEndpoints: [
-      {
-        name: '${namePrefix}-endpoint'
-        routes: [
-          {
-            name: 'sample-route'
-            originGroupName: 'sample-origin-group'
-            patternsToMatch: [
-              '/*'
-            ]
-            supportedProtocols: [
-              'Http'
-              'Https'
-            ]
-            forwardingProtocol: 'HttpsOnly'
-            httpsRedirect: 'Enabled'
-            linkToDefaultDomain: 'Enabled'
-          }
-        ]
-      }
-    ]
-  }
-}
-
 output spokeVnetName string = spokeVnet.outputs.name
 output spokeVnetResourceId string = spokeVnet.outputs.resourceId
 output sampleAppManagedIdentityClientId string = sampleAppIdentity.outputs.clientId
 output sampleAppFqdn string = sampleApp.outputs.fqdn
-// The X-Azure-FDID GUID, not the ARM resource id.
-output frontDoorId string = frontDoorId.outputs.frontDoorId
-output frontDoorUrl string = 'https://${frontDoor.outputs.frontDoorEndpointHostNames[0]}'
+// Public entry point for the demo — the app's own ACA external ingress.
+output sampleAppUrl string = 'https://${sampleApp.outputs.fqdn}'
 output caeDefaultDomain string = managedEnvironment.outputs.defaultDomain

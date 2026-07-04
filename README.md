@@ -24,7 +24,7 @@ The repo contains everything to see it work:
 |---|---|
 | The proxy (Go, single static binary) | [`proxy/`](proxy/) |
 | Hub + spoke Azure deployment (Bicep, AVM modules) | [`infra/`](infra/), [`scripts/`](scripts/) |
-| Sample workload on Azure Container Apps (behind Front Door) | [`src/SampleApp/`](src/) |
+| Sample workload on Azure Container Apps | [`src/SampleApp/`](src/) |
 | Lift-ready .NET client library (proxy + credential wiring) | [`src/EgressProxy.Client/`](src/) |
 | Local dev loop (Aspire: proxy + Azurite + mock IdP + sample) | [`src/AppHost/`](src/) |
 | The allowlist (published to the blob by CI) | [`allowlist/allowlist.json`](allowlist/allowlist.json) |
@@ -75,10 +75,11 @@ KQL for the audit trail in `EgressProxy_CL`.
 
 These all showed up during live validation — they're normal:
 
-- **`curl` against a denied host shows `000` / exit 56.** The proxy answers the CONNECT
-  with `403`; curl reports the aborted tunnel, not the status. The `403` is in the proxy
-  log (and in `.NET`, in the `HttpRequestException`).
-- **The denied-request error message varies** (`403 tunnel failure`, `407`, or a
+- **`curl` against a denied host shows `000` / exit 56.** The proxy denies the CONNECT
+  with `407` (its JWT-auth mode surfaces denies as `407 Proxy Authentication Required`);
+  curl reports the aborted tunnel, not the status. The status is in the proxy log (and in
+  `.NET`, in the `HttpRequestException`).
+- **The denied-request error message varies** (`407`, a `403 tunnel failure`, or a
   timeout/cancellation). Resilience handlers (e.g. `Microsoft.Extensions.Http.Resilience`)
   retry the failed tunnel; whichever attempt's failure surfaces last is what you see. The
   outcome is stable: the request never leaves the network.
@@ -92,7 +93,7 @@ These all showed up during live validation — they're normal:
 - **The proxy starts deny-all until the allowlist blob is seeded** (fail-closed);
   `deploy.sh` seeds it as its last step.
 - **The first request after ~15 idle minutes is slow (or one 504).** The sample app
-  scales to zero; the cold start can exceed Front Door's origin timeout once. Retry.
+  scales to zero, so the first request pays a cold start. Retry.
 - **Telemetry exporters need a `NO_PROXY` carve-out.** Anything that honours
   `HTTPS_PROXY` without carrying proxy credentials (like the App Insights exporter) will
   be denied — platform telemetry is deliberately routed direct and allowed at the NSG

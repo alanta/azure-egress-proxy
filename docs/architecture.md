@@ -17,7 +17,7 @@ flowchart LR
         ST[(Allowlist blob<br/>egress-config/allowlist.json)]
         LAW[(Log Analytics<br/>EgressProxy_CL)]
     end
-    FD[Front Door Std] -->|X-Azure-FDID| APP
+    USER((Client)) -->|HTTPS| APP
     APP -->|CONNECT + Basic MI-JWT| LB --> VMSS
     VMSS -->|allowed FQDNs only| NET((Internet))
     VMSS -->|managed identity, ETag poll| ST
@@ -48,6 +48,8 @@ flowchart LR
 
 ## What a deny looks like
 
-The proxy answers the `CONNECT` with **HTTP 403**. Note: `curl` reports this as
+The proxy denies the `CONNECT` with **HTTP 407**. Its JWT-auth model is 407-based
+(`Proxy-Authenticate: Basic` challenge), so both an unauthenticated and a policy-denied
+tunnel surface as `407 Proxy Authentication Required`. Note: `curl` reports this as
 `000`/exit 56 (it expects a tunnel, not a response) — that's a client artifact, not a
 proxy failure. The decision (and the would-be destination) is in `EgressProxy_CL`.

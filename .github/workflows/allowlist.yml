@@ -34,7 +34,7 @@ jobs:
           fi
 
           echo "upload_enabled=$upload_enabled" >> "$GITHUB_OUTPUT"
-          echo "demo_url=${{ vars.DEMO_FRONTDOOR_URL }}" >> "$GITHUB_OUTPUT"
+          echo "demo_url=${{ vars.DEMO_APP_URL }}" >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
         if: steps.preflight.outputs.upload_enabled == 'true'
@@ -93,4 +93,4 @@ jobs:
 
       - name: Skip propagation probe when demo URL is unset
         if: steps.preflight.outputs.upload_enabled == 'true' && steps.preflight.outputs.demo_url == ''
-        run: echo "::notice::DEMO_FRONTDOOR_URL repo variable is not set; skipping propagation probe."
+        run: echo "::notice::DEMO_APP_URL repo variable is not set; skipping propagation probe."

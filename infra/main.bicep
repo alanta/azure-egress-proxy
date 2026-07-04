@@ -202,6 +202,5 @@ output allowlistBlobUrl string = hub.outputs.allowlistBlobUrl
 output proxyUamiClientId string = hub.outputs.proxyUamiClientId
 output sampleAppManagedIdentityClientId string = spoke.outputs.sampleAppManagedIdentityClientId
 output sampleAppFqdn string = spoke.outputs.sampleAppFqdn
-output frontDoorUrl string = spoke.outputs.frontDoorUrl
-output frontDoorId string = spoke.outputs.frontDoorId
+output sampleAppUrl string = spoke.outputs.sampleAppUrl
 output caeDefaultDomain string = spoke.outputs.caeDefaultDomain

@@ -4,9 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-frontdoor_url="${1:-${FRONTDOOR_URL:-}}"
-if [[ -z "$frontdoor_url" ]]; then
-  echo "Usage: scripts/demo.sh <frontdoor-url>" >&2
+# Lightweight step logging so it's clear what the demo is doing and where it
+# stops if something fails. Steps go to stderr to keep stdout for the responses.
+step_no=0
+log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*" >&2; }
+info() { printf '    %s\n' "$*" >&2; }
+step() { step_no=$((step_no + 1)); log "[$step_no] $*"; }
+
+app_url="${1:-${APP_URL:-}}"
+if [[ -z "$app_url" ]]; then
+  echo "Usage: scripts/demo.sh <sample-app-url>" >&2
   exit 1
 fi
 
@@ -15,6 +22,8 @@ allowlist_file="${ALLOWLIST_FILE:-$repo_root/allowlist/allowlist.json}"
 tmp_allowlist="$(mktemp)"
 trap 'rm -f "$tmp_allowlist"' EXIT
 
+step "Reading deployment outputs ($deployment_name)"
+info "Sample app URL: $app_url"
 deployment_output_json="$(az deployment sub show --name "$deployment_name" --query properties.outputs -o json)"
 allowlist_account="$(python3 - "$deployment_output_json" <<'PY'
 import json,sys
@@ -32,14 +41,17 @@ doc=json.loads(sys.argv[1]); print(doc["allowlistBlobName"]["value"])
 PY
 )"
 
-echo "Allowed request (expect success:true):"
-curl -fsS "${frontdoor_url%/}/try/allowed" | head -c 400
+step "Allowed request -> ${app_url%/}/try/allowed"
+info "(expect success:true)"
+curl -fsS "${app_url%/}/try/allowed" | head -c 400
 echo
 
-# The app catches the proxy's 403-on-CONNECT and reports it in the body,
-# so the HTTP status here is 200 and the evidence is success:false + error.
-echo "Denied request (expect success:false with a proxy 403 error):"
-curl -fsS "${frontdoor_url%/}/try/denied" | head -c 400
+# The proxy denies the CONNECT with 407 (its JWT-auth mode surfaces both an
+# unauthenticated and a policy-denied tunnel as 407); the app catches that and reports
+# it in the body, so the HTTP status here is 200 and the evidence is success:false + error.
+step "Denied request -> ${app_url%/}/try/denied"
+info "(expect success:false with a proxy 407 error)"
+curl -fsS "${app_url%/}/try/denied" | head -c 400
 echo
 
 cat <<'KQL'
@@ -54,6 +66,7 @@ if [[ "${ADD_DENIED_HOST:-0}" == "1" ]]; then
   # Allowlist the host behind /try/denied (Demo:DeniedHost, example.org by
   # default), re-upload, and time how long the flip takes end to end.
   denied_host="${DENIED_HOST:-example.org}"
+  step "Live allowlist flip: adding $denied_host and measuring propagation"
   cp "$allowlist_file" "$tmp_allowlist"
   python3 - "$allowlist_file" "$denied_host" <<'PY'
 import json,sys
@@ -76,11 +89,12 @@ PY
     --overwrite \
     --only-show-errors >/dev/null
 
+  info "Uploaded updated allowlist to $allowlist_account/$allowlist_container/$allowlist_blob"
   echo "Allowlisted $denied_host; polling /try/denied until it flips..."
   start_ts="$(date +%s)"
   deadline=$((start_ts + 90))
   while true; do
-    body="$(curl -fsS "${frontdoor_url%/}/try/denied" || true)"
+    body="$(curl -fsS "${app_url%/}/try/denied" || true)"
     if [[ "$body" == *'"success":true'* ]]; then
       echo "Propagated in $(( $(date +%s) - start_ts ))s: $body"
       break
@@ -92,6 +106,7 @@ PY
     sleep 2
   done
 
+  step "Restoring original allowlist (removing $denied_host)"
   mv "$tmp_allowlist" "$allowlist_file"
   az storage blob upload \
     --account-name "$allowlist_account" \

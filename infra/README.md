@@ -9,7 +9,7 @@ scripts/deploy.sh
 ## What gets deployed
 
 - **Hub RG**: proxy subnet, internal LB, VMSS (Ubuntu 24.04 arm64), UAMI, public IP prefix, allowlist storage, Log Analytics + `EgressProxy_CL` table + DCR + AMA.
-- **Spoke RG**: ACA environment (workload profiles), NSG egress floor, sample app, a Basic ACR hosting the sample app image, Front Door Standard.
+- **Spoke RG**: ACA environment (workload profiles), NSG egress floor, sample app (exposed on its ACA external ingress), a Basic ACR hosting the sample app image.
 - **Cross-RG**: hub↔spoke peering and private DNS zone `egress.internal` with `proxy` A record.
 
 ## Parameters
@@ -51,13 +51,13 @@ It uses **token version v2** (`requestedAccessTokenVersion=2`) and emits:
 ## Scripts
 
 - `scripts/setup-identity.sh`: idempotent app registration + generated identity file.
-- `scripts/deploy.sh`: runs identity setup, creates a Basic ACR and imports the sample-app image from GHCR (set `GHCR_USERNAME`/`GHCR_TOKEN` while the source image is private, or `SAMPLE_APP_IMAGE` to skip the ACR), deploys infra, patches `allowlist/allowlist.json` with sample-app MI client ID, uploads blob (`--auth-mode login`), prints Front Door URL.
+- `scripts/deploy.sh`: runs identity setup, creates a Basic ACR and imports the sample-app image from GHCR (set `GHCR_USERNAME`/`GHCR_TOKEN` while the source image is private, or `SAMPLE_APP_IMAGE` to skip the ACR), deploys infra, patches `allowlist/allowlist.json` with sample-app MI client ID, uploads blob (`--auth-mode login`), prints the sample app URL.
 - `scripts/demo.sh`: exercises allowed/denied endpoints and prints KQL; optional `ADD_DENIED_HOST=1` shows allowlist propagation and reverts.
 - `scripts/teardown.sh`: deletes both RGs; optional `DELETE_APP_REGISTRATION=1` removes the app registration.
 
 ## NSG dependency note
 
-The ACA subnet NSG allow-list follows the current documented workload-profiles dependencies (`MicrosoftContainerRegistry`, `AzureFrontDoor.FirstParty`, `AzureActiveDirectory`, `AzureMonitor`, Azure DNS, intra-VNet), plus inbound `AzureFrontDoor.Backend` on `443` and `31443`.
+The ACA subnet NSG allow-list follows the current documented workload-profiles dependencies (`MicrosoftContainerRegistry`, `AzureFrontDoor.FirstParty`, `AzureActiveDirectory`, `AzureMonitor`, Azure DNS, intra-VNet), plus inbound `AzureFrontDoor.Backend` on `443` and `31443`. The two `AzureFrontDoor.*` rules are **ACA platform dependencies** — ACA delivers external ingress through Azure's managed Front Door layer (inbound arrives from `AzureFrontDoor.Backend`, post-DNAT on `31443`) — and are unrelated to fronting the app with a standalone Front Door.
 
 Pulling the sample image from ACR adds two more outbound allows: `AzureContainerRegistry:443` and `Storage.<region>:443` — below the Premium SKU, ACR serves layer data from shared Azure Storage. **The `Storage.<region>` allow softens the egress floor**: any in-region storage account becomes directly reachable from the subnet, bypassing the proxy. For a demo that trade-off is acceptable and honest to state; the production posture is ACR Premium with a private endpoint, which needs neither rule (see `docs/production-hardening.md`).
 
@@ -69,11 +69,10 @@ Because Microsoft occasionally updates service-tag guidance, re-check the latest
 |---|---:|
 | VMSS (2× `Standard_D2pls_v6`) | €90–€140 |
 | Standard internal LB | €18–€25 |
-| Front Door Standard (base + low traffic) | €30–€45 |
 | Log Analytics (light demo ingestion) | €5–€25 |
 | ACA environment + sample app (consumption/light usage) | €5–€20 |
 | ACR Basic | ~€5 |
-| **Estimated total** | **€153–€260** |
+| **Estimated total** | **€123–€215** |
 
 Use `scripts/teardown.sh` as the off switch to avoid idle spend.
 

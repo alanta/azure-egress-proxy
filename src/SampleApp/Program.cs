@@ -14,30 +14,6 @@ builder.Services.AddEgressProxy(options =>
 });
 
 var app = builder.Build();
-var expectedFrontDoorId = Environment.GetEnvironmentVariable("FRONTDOOR_ID");
-
-if (!string.IsNullOrWhiteSpace(expectedFrontDoorId))
-{
-    app.Use(async (context, next) =>
-    {
-        // Health probes (ACA) reach the container directly, not via Front Door.
-        if (context.Request.Path == "/healthz")
-        {
-            await next();
-            return;
-        }
-
-        var providedFrontDoorId = context.Request.Headers["X-Azure-FDID"].ToString();
-        if (!string.Equals(providedFrontDoorId, expectedFrontDoorId, StringComparison.Ordinal))
-        {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsJsonAsync(new { error = "Forbidden" });
-            return;
-        }
-
-        await next();
-    });
-}
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
@@ -56,6 +32,9 @@ static async Task<IResult> TryHostAsync(
     CancellationToken cancellationToken)
 {
     var client = factory.CreateClient();
+    // GitHub's API returns 403 to requests without a User-Agent; send one so an allowed
+    // call yields a real 200 rather than a header-policy rejection.
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("azure-egress-proxy-sample/1.0");
 
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     timeout.CancelAfter(TimeSpan.FromSeconds(10));

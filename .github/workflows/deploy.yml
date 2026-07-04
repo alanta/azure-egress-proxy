@@ -50,7 +50,7 @@ jobs:
 
           echo "run_deploy=$run_deploy" >> "$GITHUB_OUTPUT"
           echo "run_teardown=$run_teardown" >> "$GITHUB_OUTPUT"
-          echo "frontdoor_url=${{ vars.DEMO_FRONTDOOR_URL }}" >> "$GITHUB_OUTPUT"
+          echo "app_url=${{ vars.DEMO_APP_URL }}" >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
         if: steps.preflight.outputs.run_deploy == 'true'
@@ -64,17 +64,17 @@ jobs:
         if: steps.preflight.outputs.run_deploy == 'true'
         run: bash scripts/deploy.sh "${{ inputs.location }}"
 
-      - name: Smoke test Front Door endpoints
-        if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.frontdoor_url != ''
+      - name: Smoke test sample app endpoints
+        if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.app_url != ''
         run: |
-          fd_url="${{ steps.preflight.outputs.frontdoor_url }}"
-          fd_url="${fd_url%/}"
+          app_url="${{ steps.preflight.outputs.app_url }}"
+          app_url="${app_url%/}"
           deadline=$((SECONDS + 300))
           passed=false
 
           while [ "$SECONDS" -lt "$deadline" ]; do
-            allowed_code="$(curl -sS -o /tmp/allowed.out -w '%{http_code}' "${fd_url}/try/allowed" || true)"
-            denied_code="$(curl -sS -o /tmp/denied.out -w '%{http_code}' "${fd_url}/try/denied" || true)"
+            allowed_code="$(curl -sS -o /tmp/allowed.out -w '%{http_code}' "${app_url}/try/allowed" || true)"
+            denied_code="$(curl -sS -o /tmp/denied.out -w '%{http_code}' "${app_url}/try/denied" || true)"
 
             if [ "$allowed_code" -ge 200 ] && [ "$allowed_code" -lt 400 ] && [ "$denied_code" -ge 400 ]; then
               passed=true
@@ -93,8 +93,8 @@ jobs:
           fi
 
       - name: Skip smoke tests when demo URL is unset
-        if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.frontdoor_url == ''
-        run: echo "::notice::DEMO_FRONTDOOR_URL repo variable is not set; skipping smoke test."
+        if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.app_url == ''
+        run: echo "::notice::DEMO_APP_URL repo variable is not set; skipping smoke test."
 
       - name: Run teardown script
         if: always() && steps.preflight.outputs.run_teardown == 'true'
