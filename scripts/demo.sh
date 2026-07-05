@@ -47,11 +47,12 @@ curl -fsS "${app_url%/}/try/allowed" | head -c 400
 echo
 
 # The proxy denies the CONNECT with 407 (its JWT-auth mode surfaces both an
-# unauthenticated and a policy-denied tunnel as 407); the app catches that and reports
-# it in the body, so the HTTP status here is 200 and the evidence is success:false + error.
+# unauthenticated and a policy-denied tunnel as 407); the app turns that failed egress
+# into an HTTP 502 with success:false + the proxy error in the body. Hence -sS (not -fsS):
+# we want the body even though the status is >= 400.
 step "Denied request -> ${app_url%/}/try/denied"
-info "(expect success:false with a proxy 407 error)"
-curl -fsS "${app_url%/}/try/denied" | head -c 400
+info "(expect HTTP 502, success:false, with a proxy 407 error)"
+curl -sS "${app_url%/}/try/denied" | head -c 400
 echo
 
 cat <<'KQL'
@@ -94,7 +95,9 @@ PY
   start_ts="$(date +%s)"
   deadline=$((start_ts + 90))
   while true; do
-    body="$(curl -fsS "${app_url%/}/try/denied" || true)"
+    # -sS (not -fsS): while still denied the app returns 502; we want the body to detect
+    # the flip to success, not abort on the error status.
+    body="$(curl -sS "${app_url%/}/try/denied" || true)"
     if [[ "$body" == *'"success":true'* ]]; then
       echo "Propagated in $(( $(date +%s) - start_ts ))s: $body"
       break

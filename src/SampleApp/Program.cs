@@ -51,11 +51,15 @@ static async Task<IResult> TryHostAsync(
     }
     catch (Exception ex)
     {
+        // The egress call didn't complete — most often the proxy denied the CONNECT
+        // (blocked host), but also timeouts/DNS. Surface it as a real gateway error so
+        // callers (and CI smoke tests) can distinguish a blocked request by HTTP status,
+        // not just by parsing the body.
         return Results.Json(new
         {
             host,
             success = false,
             error = ex.GetBaseException().Message
-        });
+        }, statusCode: StatusCodes.Status502BadGateway);
     }
 }
