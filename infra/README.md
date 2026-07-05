@@ -98,9 +98,11 @@ performance surprises rather than cost.
 > support `azurelinux 4` as of AMA 1.42.0 and terminal-fails the VMSS extension. Azure
 > Linux 3.0 is the newest AMA-supported release; revisit 4.0 once AMA adds it.
 
-Measured on the earlier live `D2pls_v6` + Ubuntu deployment (2 instances, 4h uptime):
-the `egress-proxy` process held ~20 MiB RSS (cgroup peak ~9 MiB), OS + Azure Monitor
-agent ~575 MiB, load average 0.00. On Ubuntu that base load left `B2pts v2` (1 GiB)
-under ~450 MiB of headroom; moving the base OS to Azure Linux 3.0 trims the idle
-footprint, which is what makes the 1 GiB SKU a reasonable default rather than a squeeze.
+Measured on the live `B2pts_v2` + Azure Linux 3.0 deployment (2 instances, idle): of the
+897 MiB usable on the 1 GiB SKU, **~540 MiB is available** (~60% headroom). The
+`egress-proxy` process is tiny — ~15 MiB RSS, ~9 MiB cgroup — and base load is dominated
+by the Azure Monitor agent stack (mdsd + amacoreagent + MetricsExtension + helpers,
+~130 MiB); load average sits at 0.00. For comparison, the earlier `D2pls_v6` + Ubuntu
+deployment left `B2pts v2` under ~450 MiB of headroom, so the leaner Azure Linux 3.0 base
+buys back ~90 MiB and makes the 1 GiB SKU a comfortable default rather than a squeeze.
 The remaining B-series question is CPU credits under sustained tunnel traffic, not memory.
