@@ -63,6 +63,13 @@ runcmd:
   - mkdir -p /etc/egress-proxy /render
   - id -u egress-proxy >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin egress-proxy
   - chown -R egress-proxy:egress-proxy /render
+  # Azure Linux ships an active iptables service with a default INPUT DROP policy that
+  # only allows SSH — so the proxy port (and the load-balancer health probe) is dropped
+  # even though smokescreen listens on 0.0.0.0:4750. Open 4750 and persist it to the file
+  # the iptables.service restores from on boot (/etc/systemd/scripts/ip4save). Best-effort
+  # + idempotent so it's a no-op on images without this firewall (e.g. Ubuntu).
+  - iptables -C INPUT -p tcp --dport 4750 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 4750 -j ACCEPT
+  - sh -c 'command -v iptables-save >/dev/null && [ -d /etc/systemd/scripts ] && iptables-save > /etc/systemd/scripts/ip4save || true'
   - curl -fsSL "__PROXY_BINARY_URL__" -o /usr/local/bin/egress-proxy
   - echo "__PROXY_BINARY_SHA256__  /usr/local/bin/egress-proxy" | sha256sum -c -
   - chmod 0755 /usr/local/bin/egress-proxy

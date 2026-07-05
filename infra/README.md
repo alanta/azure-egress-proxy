@@ -8,7 +8,7 @@ scripts/deploy.sh
 
 ## What gets deployed
 
-- **Hub RG**: proxy subnet, internal LB, VMSS (Ubuntu 24.04 arm64), UAMI, public IP prefix, allowlist storage, Log Analytics + `EgressProxy_CL` table + DCR + AMA.
+- **Hub RG**: proxy subnet, internal LB, VMSS (Azure Linux 3.0 arm64), UAMI, public IP prefix, allowlist storage, Log Analytics + `EgressProxy_CL` table + DCR + AMA.
 - **Spoke RG**: ACA environment (workload profiles), NSG egress floor, sample app (exposed on its ACA external ingress), a Basic ACR hosting the sample app image.
 - **Cross-RG**: hub↔spoke peering and private DNS zone `egress.internal` with `proxy` A record.
 
@@ -32,7 +32,7 @@ scripts/deploy.sh
 | `vmAdminPublicKey` | _(required)_ | SSH public key for break-glass VM access |
 | `sampleAppImage` | `mcr.microsoft.com/dotnet/samples:aspnetapp` | Sample app image (deploy.sh overrides this with the ACR-imported release image) |
 | `containerRegistryName` | `''` | Existing ACR in the spoke RG hosting the sample image; empty disables ACR wiring |
-| `proxyVmSku` | `Standard_D2pls_v6` | VMSS instance SKU |
+| `proxyVmSku` | `Standard_B2pts_v2` | VMSS instance SKU (smallest ARM64 burstable; see the burst matrix below) |
 | `proxyInstanceCount` | `2` | VMSS instance count |
 | `proxyPublicIpPrefixLength` | `31` | Known egress CIDR size |
 
@@ -67,12 +67,12 @@ Because Microsoft occasionally updates service-tag guidance, re-check the latest
 
 | Resource | Approx monthly |
 |---|---:|
-| VMSS (2× `Standard_D2pls_v6`) | €90–€140 |
+| VMSS (2× `Standard_B2pts_v2`) | €10–€15 |
 | Standard internal LB | €18–€25 |
 | Log Analytics (light demo ingestion) | €5–€25 |
 | ACA environment + sample app (consumption/light usage) | €5–€20 |
 | ACR Basic | ~€5 |
-| **Estimated total** | **€123–€215** |
+| **Estimated total** | **€43–€90** |
 
 Use `scripts/teardown.sh` as the off switch to avoid idle spend.
 
@@ -86,10 +86,21 @@ The table below compares the most relevant low-cost ARM64 sizes for the proxy. N
 | `B2pls v2` | $24.5280/month | 6,250 Mbps | Better fit for a public demo with occasional spikes | Good balance of cost, memory, and burstability |
 | `D2pls v6` | $45.2600/month | 60,000 Mbps | Comfortable multi-Gbps bursts without relying on CPU credits | Best default when predictability matters more than absolute minimum cost |
 
-Suggested default for a public demo: `B2pls v2`. It keeps the ARM64 and burstable profile, is materially cheaper than `B2ps v2`, and leaves more memory room than `B2pts v2`. Use `D2pls v6` if the goal is to minimize performance surprises rather than cost.
+Current default: `B2pts v2` — the smallest, cheapest ARM64 burstable size. This is the
+absolute-minimum-cost posture ([#7](https://github.com/alanta/azure-egress-proxy/issues/7)),
+paired with the Azure Linux 3.0 base ([#1](https://github.com/alanta/azure-egress-proxy/issues/1))
+to claw back the memory headroom the smallest SKU otherwise lacks. Step up to `B2pls v2`
+if you want more memory room while staying burstable, or `D2pls v6` to minimize
+performance surprises rather than cost.
 
-Measured on the live `D2pls_v6` deployment (2 instances, 4h uptime): the `egress-proxy`
-process holds ~20 MiB RSS (cgroup peak ~9 MiB), OS + Azure Monitor agent ~575 MiB, load
-average 0.00. Memory is never the constraint at this SKU class — `B2pls v2` (4 GiB) has
-~3.3 GiB of headroom, while `B2pts v2` (1 GiB) would leave <450 MiB after base load.
-The B-series question is CPU credits under sustained tunnel traffic, not memory.
+> **Azure Linux 4.0 is not used yet.** It was evaluated ([#1](https://github.com/alanta/azure-egress-proxy/issues/1))
+> but the Azure Monitor agent — which feeds the `EgressProxy_CL` pipeline — does not
+> support `azurelinux 4` as of AMA 1.42.0 and terminal-fails the VMSS extension. Azure
+> Linux 3.0 is the newest AMA-supported release; revisit 4.0 once AMA adds it.
+
+Measured on the earlier live `D2pls_v6` + Ubuntu deployment (2 instances, 4h uptime):
+the `egress-proxy` process held ~20 MiB RSS (cgroup peak ~9 MiB), OS + Azure Monitor
+agent ~575 MiB, load average 0.00. On Ubuntu that base load left `B2pts v2` (1 GiB)
+under ~450 MiB of headroom; moving the base OS to Azure Linux 3.0 trims the idle
+footprint, which is what makes the 1 GiB SKU a reasonable default rather than a squeeze.
+The remaining B-series question is CPU credits under sustained tunnel traffic, not memory.
