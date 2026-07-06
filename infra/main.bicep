@@ -42,8 +42,8 @@ param sampleAppImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 @description('Name of an existing Azure Container Registry in the spoke resource group that hosts the sample app image. Empty means no ACR wiring (sampleAppImage must then be pullable from MCR).')
 param containerRegistryName string = ''
 
-@description('Proxy VM size.')
-param proxyVmSku string = 'Standard_D2pls_v6'
+@description('Proxy VM size. Defaults to the smallest ARM64 burstable size (B2pts_v2) — the lowest-cost option for a light demo; see infra/README.md for the burst matrix and headroom notes.')
+param proxyVmSku string = 'Standard_B2pts_v2'
 
 @description('Enable encryption at host on the proxy VMSS (requires the Microsoft.Compute/EncryptionAtHost subscription feature).')
 param encryptionAtHost bool = false

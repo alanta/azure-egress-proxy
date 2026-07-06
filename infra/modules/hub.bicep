@@ -293,17 +293,24 @@ module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.0' = 
     // Manual (the default) strands existing instances on the old model when the
     // deployment later adds the AMA extension — logs silently never arrive.
     upgradePolicyMode: 'Automatic'
-    availabilityZones: [
-      1
-      2
-    ]
+    // Non-zonal (regional) VMSS: the smallest burstable SKUs aren't offered in every
+    // availability zone (e.g. B2pts_v2 is zone 3 only in swedencentral), and logical
+    // zone numbers are per-subscription mappings, so pinning specific zones is fragile
+    // across SKUs/regions. The Standard LB frontend stays zone-redundant regardless.
+    availabilityZones: []
     overprovision: false
     singlePlacementGroup: false
     vmNamePrefix: 'egproxy'
+    // Azure Linux 3.0 (arm64, Gen2) — a minimal single-purpose appliance base with a
+    // small attack surface and a leaner idle footprint than Ubuntu, which matters most
+    // on the smallest burstable SKU (see proxyVmSku / infra/README.md). cloud-init drives
+    // tdnf, not apt. NB: Azure Linux *4.0* is intentionally not used yet — the Azure
+    // Monitor agent (AMA, feeds EgressProxy_CL) does not support azurelinux 4 as of AMA
+    // 1.42.0 and terminal-fails the VMSS; 3.0 is the newest AMA-supported Azure Linux.
     imageReference: {
-      publisher: 'Canonical'
-      offer: 'ubuntu-24_04-lts'
-      sku: 'server-arm64'
+      publisher: 'MicrosoftCBLMariner'
+      offer: 'azure-linux-3'
+      sku: 'azure-linux-3-arm64'
       version: 'latest'
     }
     osDisk: {
