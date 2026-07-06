@@ -65,14 +65,33 @@ Because Microsoft occasionally updates service-tag guidance, re-check the latest
 
 ## Monthly cost guide (ballpark, West Europe)
 
+The point of this project is that identity-aware **secure egress can be added to an Azure
+hub/spoke network cheaply**. The tables below separate the **egress proxy itself** — what
+you actually pay to run the capability — from the **demo scaffolding** (the sample app and
+its registry), which exists only to exercise the proxy and would not be part of a real
+deployment.
+
+### Egress proxy (the capability)
+
 | Resource | Approx monthly |
 |---|---:|
 | VMSS (2× `Standard_B2pts_v2`) | €10–€15 |
-| Standard internal LB | €18–€25 |
-| Log Analytics (light demo ingestion) | €5–€25 |
-| ACA environment + sample app (consumption/light usage) | €5–€20 |
-| ACR Basic | ~€5 |
-| **Estimated total** | **€43–€90** |
+| Standard internal load balancer | €18–€25 |
+| Log Analytics (decision/audit ingestion, light) | €5–€25 |
+| Public IP prefix + allowlist/bootstrap storage | €5–€10 |
+| **Proxy subtotal** | **€38–€75** |
+
+The load balancer, not the compute, dominates the bill — the ARM64 burstable VMSS is a
+small part of it. Dropping to a single instance (`proxyInstanceCount=1`) roughly halves
+the compute line for non-HA scenarios.
+
+### Demo scaffolding (not part of the product)
+
+| Resource | Approx monthly |
+|---|---:|
+| ACA environment + sample app (consumption, light) | €5–€20 |
+| ACR Basic (hosts the sample image) | ~€5 |
+| **Demo subtotal** | **€10–€25** |
 
 Use `scripts/teardown.sh` as the off switch to avoid idle spend.
 
