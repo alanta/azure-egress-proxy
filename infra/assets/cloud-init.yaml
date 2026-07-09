@@ -73,6 +73,13 @@ write_files:
 
 runcmd:
   - mkdir -p /etc/egress-proxy /render
+  # journald is already running with the image default (ForwardToSyslog on) by the time
+  # cloud-init writes the drop-in above, so restart it now — before the proxy starts — to
+  # apply ForwardToSyslog=no on first boot. Without this the setting only takes effect at
+  # the next reboot and every proxy line is duplicated in EgressProxy_CL until then.
+  # Restart rsyslog afterwards so imjournal reconnects cleanly to the fresh journald.
+  - systemctl restart systemd-journald
+  - systemctl try-restart rsyslog || true
   - id -u egress-proxy >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin egress-proxy
   - chown -R egress-proxy:egress-proxy /render
   # Azure Linux ships an active iptables service with a default INPUT DROP policy that
