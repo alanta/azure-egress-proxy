@@ -33,6 +33,18 @@ write_files:
         - 169.254.0.0/16
         - 127.0.0.0/8
 
+  # The proxy logs to stdout -> journald; rsyslog reads the journal via imjournal and
+  # ships it to Log Analytics through AMA. Azure Linux 3 ALSO leaves journald forwarding
+  # to the syslog socket, which imuxsock then reads too — so every proxy line reaches
+  # rsyslog twice and lands in EgressProxy_CL 2x (doubling ingestion + cost). Disable the
+  # forward and let imjournal be the single reader, so each line is shipped exactly once.
+  - path: /etc/systemd/journald.conf.d/10-no-syslog-forward.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Journal]
+      ForwardToSyslog=no
+
   - path: /etc/systemd/system/egress-proxy.service
     owner: root:root
     permissions: '0644'
