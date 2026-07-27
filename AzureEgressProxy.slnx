@@ -7,6 +7,7 @@
     <Project Path="src/EgressProxy.Client/EgressProxy.Client.csproj" />
     <Project Path="src/SampleApp/SampleApp.csproj" />
     <Project Path="src/ServiceDefaults/ServiceDefaults.csproj" />
+    <Project Path="src/ServiceDefaults.Tests/ServiceDefaults.Tests.csproj" />
   </Folder>
   <Folder Name="/src/AppHost/">
     <Project Path="src/AppHost/AllowlistSeeder/AllowlistSeeder.csproj" />

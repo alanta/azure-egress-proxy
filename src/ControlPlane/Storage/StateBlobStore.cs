@@ -51,13 +51,24 @@ public sealed class StateBlobStore : IStateBlobStore
     private readonly BlobClient _allowlist;
 
     public StateBlobStore(BlobStoreOptions options)
+        : this(options, clientOptions: null)
+    {
+    }
+
+    /// <summary>
+    /// Takes the SDK's client options so tests can substitute the transport and drive the real
+    /// ETag/conditional-request behaviour without Azurite. DI never sees this overload — the
+    /// container only considers public constructors — so the production path stays the one above.
+    /// </summary>
+    internal StateBlobStore(BlobStoreOptions options, BlobClientOptions? clientOptions)
     {
         var service = options.ConnectionString is { Length: > 0 } connectionString
-            ? new BlobServiceClient(connectionString)
+            ? new BlobServiceClient(connectionString, clientOptions)
             : new BlobServiceClient(
                 new Uri(options.ServiceUri ?? throw new InvalidOperationException(
                     "configure ControlPlane:Storage:ServiceUri (Azure) or :ConnectionString (Azurite)")),
-                new DefaultAzureCredential());
+                new DefaultAzureCredential(),
+                clientOptions);
 
         var container = service.GetBlobContainerClient(options.Container);
         _state = container.GetBlobClient(options.StateBlob);
