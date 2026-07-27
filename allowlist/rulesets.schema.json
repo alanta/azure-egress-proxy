@@ -16,7 +16,7 @@
       }
     },
     "grants": {
-      "description": "Platform-owned RBAC: which identities hold onboard/update/offboard. Edited by the platform team out of band; read-only to the API, which splices it through every write untouched.",
+      "description": "Platform-owned RBAC: which identities hold onboard/update/offboard/bind. Edited by the platform team out of band; read-only to the API, which splices it through every write untouched.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/grant"
@@ -51,7 +51,7 @@
           "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
         },
         "subjects": {
-          "description": "The workload identities this ruleset governs. Write-once at onboard; a subject belongs to at most one ruleset.",
+          "description": "The workload identities this ruleset governs. Set at onboard; changing membership afterwards needs the 'bind' verb. A subject belongs to at most one ruleset.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -65,7 +65,7 @@
           "$ref": "#/$defs/acl"
         },
         "owner": {
-          "description": "Identity recorded trust-on-first-use at onboard; holds update/offboard on this ruleset.",
+          "description": "Identity recorded trust-on-first-use at onboard; holds update/offboard/bind on this ruleset.",
           "type": "string",
           "minLength": 1
         }
@@ -160,12 +160,13 @@
             "enum": [
               "onboard",
               "update",
-              "offboard"
+              "offboard",
+              "bind"
             ]
           }
         },
         "rulesets": {
-          "description": "Scopes update/offboard to these ruleset names. Omitted means every ruleset — platform-team grants only. Never scopes onboard, which is registry-wide by nature (the ruleset does not exist yet).",
+          "description": "Scopes update/offboard/bind to these ruleset names. Omitted means every ruleset — platform-team grants only. Never scopes onboard, which is registry-wide by nature (the ruleset does not exist yet).",
           "type": "array",
           "items": {
             "type": "string",

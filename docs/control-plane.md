@@ -103,9 +103,11 @@ Invariants:
 - **Writer ≠ subject.** The identity allowed to write a ruleset is never the workload identity
   it governs. A compromised workload therefore cannot widen its own allowlist — the exact
   attack the proxy exists to stop.
-- **Subjects are write-once at onboard.** They are set when the ruleset is created and are
-  immutable under a content update. (Restating them unchanged is fine, so a desired-state
-  pipeline can keep pushing one file.)
+- **Subjects change only with `bind`.** They are set at onboard, and a plain content `update`
+  can never touch them (steady-state anti-hijack). A module grows, though — new workloads join
+  it — so changing membership is a first-class operation gated by its own `bind` verb, not a
+  teardown. (Restating the stored subjects unchanged needs nothing, so a desired-state pipeline
+  can keep pushing one file; only a *change* requires `bind`.)
 
 ### Rendering: why `allowlist.json` never changes
 
@@ -130,21 +132,22 @@ same state document and edited by the platform team out of band:
 | Verb | Grants | Scope |
 |---|---|---|
 | `onboard` | create a new ruleset (declaring its subjects) | registry — the ruleset doesn't exist yet |
-| `update` | replace an existing ruleset's content | that ruleset (or unscoped) |
+| `update` | replace an existing ruleset's content (hosts + action) | that ruleset (or unscoped) |
+| `bind` | change an existing ruleset's subjects (add/remove workloads) | that ruleset (or unscoped) |
 | `offboard` | remove a ruleset, freeing its subjects | that ruleset (or unscoped) |
 
 ```jsonc
 "grants": [
   { "identity": "<pipeline appid>", "verbs": ["onboard"] },
-  { "identity": "<platform appid>", "verbs": ["onboard", "update", "offboard"] }  // unscoped
+  { "identity": "<platform appid>", "verbs": ["onboard", "update", "offboard", "bind"] }  // unscoped
 ]
 ```
 
 - **Reads are open.** Any authenticated caller may list and read every ruleset — the egress
   posture is transparent by design. Only writes require a verb.
 - **Trust-on-first-use ownership.** When an `onboard`-holder creates a ruleset, it is recorded
-  as `owner` and gains `update`/`offboard` on it — so onboarding costs one platform grant, not
-  a ticket per ruleset.
+  as `owner` and gains `update`/`bind`/`offboard` on it — so onboarding, and growing the module
+  afterwards, cost one platform grant, not a ticket per ruleset.
 - **Enforce, don't investigate.** The control plane enforces the platform's grants and
   **never** reaches into Azure (ARM/Graph) to verify which identity owns which subject.
   Squatting on an un-onboarded subject is bounded by how narrowly `onboard` is granted;
@@ -176,12 +179,13 @@ for rollback.
 | `GET /rulesets` | none (auth only) | list all rulesets (transparency) |
 | `GET /rulesets/{name}` | none (auth only) | read one ruleset |
 | `PUT /rulesets/{name}` (absent) | `onboard` | create it, set subjects, TOFU ownership; `report` if no action given |
-| `PUT /rulesets/{name}` (exists) | `update` / owner | **full replace** of content; changing subjects/acl rejected |
-| `POST /rulesets/{name}:check` | none (auth only) | dry-run: validate, return `{ added, removed }`, no write |
+| `PUT /rulesets/{name}` (exists) | `update` / owner (+ `bind` if subjects change) | **full replace** of content; changing subjects additionally needs `bind`; changing acl rejected |
+| `POST /rulesets/{name}:check` | none (auth only) | dry-run: validate, return the same diff shape as a write, no write |
 | `DELETE /rulesets/{name}` | `offboard` / owner | remove it, free its subjects (fail-closed) |
 
-Status codes: `401` no/invalid token · `403` missing verb, or the caller is a governed subject ·
-`400` invalid host, or an attempt to change frozen fields · `404` unknown ruleset ·
+Status codes: `401` no/invalid token · `403` missing verb (including a subject change without
+`bind`), or the caller is a governed subject · `400` invalid host, or an attempt to change the
+frozen `acl` · `404` unknown ruleset ·
 `409` subject already claimed by another ruleset, or sustained write contention ·
 `503` saved, but publishing to the proxy failed (see *Failure modes*).
 
@@ -195,6 +199,11 @@ Status codes: `401` no/invalid token · `403` missing verb, or the caller is a g
   control plane never lowers a ruleset's action on its own either — adding a host to an
   *already enforcing* ruleset does **not** downgrade it. What guards widening is the audit event
   per added host plus the `:check` diff.
+- **A write reports what it changed, in both halves.** `added`/`removed` list hosts;
+  `bound`/`unbound` list subjects. Membership needs reporting for the same reason hosts do — a push
+  is a full replace, so a bind can take a workload *away* as well as add one — and `:check` returns
+  the identical shape without writing, so a pipeline can gate on a membership change before making
+  it. The same events appear in the audit log as `subject ... BOUND to ruleset`.
 - **`PUT` is a full replace (desired-state).** A team keeps a rules file per environment in its
   repo; the pipeline pushes that file, so the ruleset always matches the repo and a host absent
   from the push is removed. Removals are audited, and `:check` surfaces them before a push.
@@ -232,6 +241,15 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/j
   -d '{"content":{"allowed_hosts":["api.stripe.com"],"action":"enforce"}}' \
   $API/rulesets/payments
 # -> 200  "action":"enforce"
+
+# Module grows: bind a second workload. Restate the subject set with the newcomer added.
+# Needs the `bind` verb (the owner has it); a content-only pusher without it gets 403.
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"subjects":[{"appid":"33333333-3333-3333-3333-333333333333"},
+                   {"appid":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}],
+       "content":{"allowed_hosts":["api.stripe.com"],"action":"enforce"}}' \
+  $API/rulesets/payments
+# -> 200  "bound":["bbbbbbbb-..."]  "unbound":[]
 
 # Offboard — subjects fall to the fallback/deny block on the next reload
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" $API/rulesets/payments

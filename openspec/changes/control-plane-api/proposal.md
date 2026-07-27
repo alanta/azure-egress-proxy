@@ -30,19 +30,22 @@ deferred.
   `PUT /rulesets/{name}`, `POST /rulesets/{name}:check` (dry-run), `DELETE /rulesets/{name}`.
 - **AuthN** reuses the proxy's existing JWT/JWKS validation for the caller's
   managed-identity token. **AuthZ** is **platform-managed RBAC**: the platform team grants
-  service-connection (pipeline) identities the verbs `onboard`, `update`, and `offboard`.
-  Reads are open to any authenticated caller; writes require the matching verb. The control
-  plane **enforces** these grants — it does **not** investigate Azure to verify subject
-  provenance (no ARM/Graph traceback).
+  service-connection (pipeline) identities the verbs `onboard`, `update`, `bind`, and
+  `offboard`. Reads are open to any authenticated caller; writes require the matching verb.
+  The control plane **enforces** these grants — it does **not** investigate Azure to verify
+  subject provenance (no ARM/Graph traceback).
 - **Self-provisioning (onboarding)**: a service connection holding `onboard` can create a
   new ruleset on first push, declaring its `subjects`. **Trust-on-first-use** — the creator
-  is recorded as the ruleset's owner (gains `update`/`offboard`), so onboarding needs one
-  platform grant, not a platform ticket per ruleset. The platform team can override any
+  is recorded as the ruleset's owner (gains `update`/`bind`/`offboard`), so onboarding needs
+  one platform grant, not a platform ticket per ruleset. The platform team can override any
   ruleset's grants afterward.
-- **Subjects are write-once at onboard, frozen for update**: `onboard` sets `subjects`;
-  `update` may write **`allowed_hosts` and `action` only**. This preserves the anti-hijack
-  property in steady state. Uniqueness (first-come) protects already-onboarded subjects;
-  the platform's scoping of who gets `onboard` bounds squatting on un-onboarded ones.
+- **Membership is separated from content**: `onboard` sets `subjects`; a plain `update` may
+  write **`allowed_hosts` and `action` only** and never touches `subjects` (steady-state
+  anti-hijack). A module grows, though, so changing membership — adding/removing the
+  workloads a ruleset governs — is a first-class operation gated by its own **`bind`** verb,
+  validated and uniqueness-checked like an onboard. Uniqueness (first-come) protects
+  already-onboarded subjects; the platform's scoping of who gets `onboard`/`bind` bounds
+  squatting on un-onboarded ones.
 - **`report` is the onboarding default, never an override**: evaluation within a ruleset is
   uniform (one `action`), and the system never lowers a ruleset's action on its own. A ruleset
   onboarded *without* an explicit action starts in `report` — the documented on-ramp for a
@@ -73,7 +76,7 @@ deferred.
   policy. Replaces "module" as the authored unit; the proxy's read contract is untouched,
   because rulesets are *rendered* into it rather than replacing it.
 - `control-plane-api`: The HTTP API surface for Mode 2 — endpoints, authN via JWT/JWKS,
-  platform-managed RBAC authZ (`onboard`/`update`/`offboard` verbs) with trust-on-first-use
+  platform-managed RBAC authZ (`onboard`/`update`/`bind`/`offboard` verbs) with trust-on-first-use
   ownership, the blob-as-private-store read-modify-write, and ETag optimistic concurrency
   with bounded resilience retry.
 
@@ -95,7 +98,7 @@ deferred.
   **sole** holder of `Storage Blob Data Contributor` on the (now private) allowlist blob;
   the proxy's identity gets `Storage Blob Data Reader`; **no pipeline gets any blob role**.
   A platform-owned `grants` section of the control-plane state blob holds the
-  `onboard`/`update`/`offboard` grants and is loaded read-only by the API.
+  `onboard`/`update`/`bind`/`offboard` grants and is loaded read-only by the API.
 - **Dependencies**: `Microsoft.Extensions.Resilience` (Polly v8) added to the API project.
 - **Docs**: a new `docs/control-plane.md` (model, RBAC, API, `curl` examples) plus README /
   `docs/allowlist.md` updates covering the two topologies — **without** the control plane
@@ -106,8 +109,6 @@ deferred.
 - Management portal and the human `edit` verb (Mode 3).
 - **RBAC administration through the control-plane API** — grants are managed by the
   platform team out of band (manually) for now; an API to manage them is future work.
-- Reassigning `subjects` after onboard via the API — subjects are write-once at onboard;
-  changing them later is a platform op or offboard-and-re-onboard.
 - The control plane verifying subject provenance against Azure (ARM/Graph) — trust is the
   platform team's RBAC grant, enforced not investigated.
 - Ruleset composition / many-to-many / a shared trusted-baseline ruleset — the existing

@@ -148,12 +148,18 @@ app.MapDelete("/rulesets/{name}", async (
 app.MapDefaultEndpoints();
 app.Run();
 
+// A write reports both halves of what it changed: hosts (added/removed) and membership
+// (bound/unbound). The membership half matters for the same reason the host diff does — a push is
+// a full replace, so a pipeline needs to see what a bind took away as well as what it granted, and
+// `:check` returns exactly this shape without writing.
 static object Body(WriteOutcome outcome) => new
 {
     ruleset = outcome.Ruleset,
     created = outcome.Created,
     added = outcome.Diff?.Added ?? [],
     removed = outcome.Diff?.Removed ?? [],
+    bound = outcome.SubjectDiff?.Added ?? [],
+    unbound = outcome.SubjectDiff?.Removed ?? [],
 };
 
 static IResult Problem(PolicyError error) =>

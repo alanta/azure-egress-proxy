@@ -48,22 +48,35 @@ MUST NOT be able to modify the ruleset that governs its own egress.
   ruleset
 - **THEN** the write SHALL be denied
 
-### Requirement: Platform-managed RBAC and subject write-once
+### Requirement: Platform-managed RBAC and subject membership
 
 The system SHALL manage authority to change rulesets through platform-owned RBAC that grants
-identities the verbs `onboard` (create a ruleset), `update` (replace content), and
-`offboard` (remove a ruleset). Base grants SHALL be platform-owned configuration loaded
-read-only by the control plane; the control plane SHALL enforce them without verifying
-subject ownership against Azure. `subjects` SHALL be set only at `onboard` and SHALL be
-immutable under `update` (content-only). When an `onboard`-holder creates a ruleset, the
-control plane SHALL record it as owner (trust-on-first-use), granting it `update`/`offboard`
-on that ruleset.
+identities the verbs `onboard` (create a ruleset), `update` (replace content), `bind` (change
+which subjects a ruleset governs), and `offboard` (remove a ruleset). Base grants SHALL be
+platform-owned configuration loaded read-only by the control plane; the control plane SHALL
+enforce them without verifying subject ownership against Azure. `subjects` SHALL be set at
+`onboard`; a plain `update` SHALL NOT change them, and changing membership afterwards SHALL
+require the `bind` verb. When an `onboard`-holder creates a ruleset, the control plane SHALL
+record it as owner (trust-on-first-use), granting it `update`, `bind`, and `offboard` on that
+ruleset.
 
 #### Scenario: Update writes content only
 
-- **WHEN** an authorized caller updates a ruleset
+- **WHEN** an authorized caller updates a ruleset without the `bind` verb
 - **THEN** only `allowed_hosts` and `action` are updated, and any attempt to change
-  `subjects` or `acl` in the same request is rejected
+  `subjects` (or `acl`) in the same request is rejected
+
+#### Scenario: Bind changes membership
+
+- **WHEN** a caller holding `bind` (or the owner) pushes a changed `subjects` set that passes
+  uniqueness and writer≠subject checks
+- **THEN** the ruleset's membership is updated to the new set
+
+#### Scenario: Membership change without bind is denied
+
+- **WHEN** a caller holding only `update` pushes a `subjects` set that differs from the stored
+  one
+- **THEN** the request SHALL be denied and nothing is written
 
 #### Scenario: Onboard requires the verb
 
@@ -73,8 +86,8 @@ on that ruleset.
 #### Scenario: Trust-on-first-use assigns ownership
 
 - **WHEN** a caller holding `onboard` creates a ruleset
-- **THEN** that caller is recorded as the ruleset's owner and may subsequently `update` and
-  `offboard` it
+- **THEN** that caller is recorded as the ruleset's owner and may subsequently `update`,
+  `bind`, and `offboard` it
 
 ### Requirement: Report is the onboarding default
 

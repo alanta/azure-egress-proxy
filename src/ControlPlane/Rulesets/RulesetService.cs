@@ -7,8 +7,9 @@ using Polly.Registry;
 
 namespace ControlPlane.Rulesets;
 
-/// <summary>What a caller asked for. <see cref="Subjects"/> and <see cref="Acl"/> are settable only
-/// at onboard; on an existing ruleset they may only restate what is already stored.</summary>
+/// <summary>What a caller asked for. <see cref="Acl"/> is settable only at onboard. <see cref="Subjects"/>
+/// is set at onboard; on an existing ruleset, changing it is a membership change that needs the
+/// <c>bind</c> verb — restating the stored subjects unchanged is always fine.</summary>
 public sealed record PushRequest
 {
     public List<Subject>? Subjects { get; init; }
@@ -20,6 +21,7 @@ public sealed record WriteOutcome(
     PolicyError? Error = null,
     Ruleset? Ruleset = null,
     HostDiff? Diff = null,
+    SubjectDiff? SubjectDiff = null,
     bool Created = false)
 {
     public bool Succeeded => Error is null;
@@ -94,9 +96,44 @@ public sealed class RulesetService(
             return (new WriteOutcome(contentError), null);
         }
 
-        var subjects = isOnboard ? request.Subjects ?? [] : existing!.Subjects;
-
+        List<Subject> subjects;
         if (isOnboard)
+        {
+            subjects = request.Subjects ?? [];
+        }
+        else
+        {
+            // Acl stays write-once at onboard; only membership has a verb to unlock it.
+            if (RejectsAclChange(request, existing!) is { } aclError)
+            {
+                return (new WriteOutcome(aclError), null);
+            }
+
+            // A change to which workloads the ruleset governs is the sensitive half of the write,
+            // distinct from editing hosts: it needs `bind`, which the onboarding owner holds via
+            // trust-on-first-use. A restated (unchanged) subject list needs nothing, so a
+            // desired-state pipeline that only holds `update` keeps pushing its one file.
+            if (request.Subjects is { } requested && RulesetPolicy.MembershipChanges(existing!.Subjects, requested))
+            {
+                if (!RulesetPolicy.IsAuthorized(state, caller, Verbs.Bind, name, existing))
+                {
+                    return (Forbidden(
+                        $"changing the subjects of ruleset '{name}' requires the 'bind' verb; "
+                        + "an update writes allowed_hosts and action only"), null);
+                }
+
+                subjects = requested;
+            }
+            else
+            {
+                subjects = existing!.Subjects;
+            }
+        }
+
+        // Membership (onboard or a bind) is validated and uniqueness-checked; a restated list is
+        // already-stored and needs neither. CheckSubjectsAreUnclaimed excludes this ruleset by
+        // name, so keeping existing subjects while adding one only tests the newcomer.
+        if (isOnboard || !ReferenceEquals(subjects, existing!.Subjects))
         {
             if (RulesetPolicy.ValidateSubjects(subjects) is { } subjectError)
             {
@@ -108,10 +145,6 @@ public sealed class RulesetService(
                 return (new WriteOutcome(uniqueError), null);
             }
         }
-        else if (RejectsFrozenFields(request, existing!) is { } frozenError)
-        {
-            return (new WriteOutcome(frozenError), null);
-        }
 
         if (RulesetPolicy.CheckWriterIsNotSubject(state, caller, subjects) is { } writerError)
         {
@@ -119,6 +152,7 @@ public sealed class RulesetService(
         }
 
         var diff = RulesetPolicy.Diff(existing?.Content.AllowedHosts ?? [], content.AllowedHosts);
+        var subjectDiff = isOnboard ? null : RulesetPolicy.DiffSubjects(existing!.Subjects, subjects);
 
         var written = new Ruleset
         {
@@ -142,7 +176,7 @@ public sealed class RulesetService(
         // path must never be able to widen the authority that authorized it.
         var next = state with { Rulesets = [.. rulesets] };
 
-        return (new WriteOutcome(Ruleset: written, Diff: diff, Created: isOnboard), next);
+        return (new WriteOutcome(Ruleset: written, Diff: diff, SubjectDiff: subjectDiff, Created: isOnboard), next);
     }
 
     private static (WriteOutcome Outcome, StateDocument? Next) Delete(StateDocument state, string name, string caller)
@@ -170,20 +204,13 @@ public sealed class RulesetService(
     }
 
     /// <summary>
-    /// Subjects and acl are write-once at onboard: that is what makes steady-state identity hijack
-    /// impossible, since an <c>update</c> grant can never move a workload under different rules. A
-    /// desired-state pipeline that keeps restating the stored subjects is fine — only a *change* is
-    /// refused.
+    /// Acl is write-once at onboard: it is reserved for the management portal (Mode 3) and the Mode 2
+    /// write path never edits it. Subjects are handled separately — a change there is gated by the
+    /// <c>bind</c> verb rather than refused outright. Restating the stored acl unchanged is fine, so a
+    /// desired-state pipeline that echoes what it read is not tripped up.
     /// </summary>
-    private static PolicyError? RejectsFrozenFields(PushRequest request, Ruleset existing)
+    private static PolicyError? RejectsAclChange(PushRequest request, Ruleset existing)
     {
-        if (request.Subjects is { } subjects
-            && !subjects.Select(s => s.Key).ToHashSet().SetEquals(existing.Subjects.Select(s => s.Key)))
-        {
-            return new PolicyError(HttpStatusCode.BadRequest,
-                "'subjects' is set at onboard and frozen afterwards; an update writes allowed_hosts and action only");
-        }
-
         if (request.Acl is { } acl && !SameAcl(acl, existing.Acl))
         {
             return new PolicyError(HttpStatusCode.BadRequest,

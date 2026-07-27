@@ -141,6 +141,85 @@ public class ApiTests(ControlPlaneFixture fixture) : IClassFixture<ControlPlaneF
         Assert.Equal(0, fixture.Store.PublishedCount);
     }
 
+    // ---- membership changes are visible to the caller ---------------------------------------
+
+    /// <summary>
+    /// A pipeline has to be able to confirm a membership change from the response, for the same
+    /// reason it gates on the host diff: a push is a full replace, so a bind can take a workload
+    /// away as well as add one, and the audit log is not something a pipeline can read.
+    /// </summary>
+    [Fact]
+    public async Task A_bind_reports_which_subjects_were_bound_and_unbound()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var response = await client.PutAsJsonAsync("/rulesets/payments", new
+        {
+            // Swaps one governed workload for another: one bound, one unbound.
+            subjects = new[] { new { appid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" } },
+            content = new { allowed_hosts = new[] { "api.github.com", "b.example.com" }, action = "enforce" },
+        });
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", body.GetProperty("bound")[0].GetString());
+        Assert.Equal(Workload, body.GetProperty("unbound")[0].GetString());
+    }
+
+    /// <summary>A push that leaves membership alone reports neither, so the fields are a signal
+    /// rather than noise on every write.</summary>
+    [Fact]
+    public async Task A_content_only_push_reports_no_membership_change()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var response = await client.PutAsJsonAsync("/rulesets/payments", Push(["api.github.com"], "enforce"));
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Empty(body.GetProperty("bound").EnumerateArray());
+        Assert.Empty(body.GetProperty("unbound").EnumerateArray());
+        Assert.Equal("b.example.com", body.GetProperty("removed")[0].GetString());
+    }
+
+    /// <summary>:check previews the membership change too, so a pipeline can gate on a bind
+    /// before making it — the whole point of the dry run.</summary>
+    [Fact]
+    public async Task Check_previews_a_bind_without_writing()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var response = await client.PostAsJsonAsync("/rulesets/payments:check", new
+        {
+            subjects = new[] { new { appid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" } },
+            content = new { allowed_hosts = new[] { "api.github.com", "b.example.com" }, action = "enforce" },
+        });
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", body.GetProperty("bound")[0].GetString());
+        Assert.Equal(Workload, body.GetProperty("unbound")[0].GetString());
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    /// <summary>An onboard binds nothing: every subject is new, so reporting them as "bound" would
+    /// be noise. Membership reporting is about CHANGE to an existing ruleset.</summary>
+    [Fact]
+    public async Task An_onboard_reports_no_membership_change()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed()), Pipeline);
+
+        var response = await client.PutAsJsonAsync("/rulesets/payments", new
+        {
+            subjects = new[] { new { appid = Workload } },
+            content = new { allowed_hosts = new[] { "api.stripe.com" } },
+        });
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Empty(body.GetProperty("bound").EnumerateArray());
+        Assert.Empty(body.GetProperty("unbound").EnumerateArray());
+    }
+
     // ---- the anti-hijack invariant, over HTTP ------------------------------------------------
 
     [Fact]
@@ -177,7 +256,7 @@ public class ApiTests(ControlPlaneFixture fixture) : IClassFixture<ControlPlaneF
         Rulesets = [.. rulesets],
         Grants =
         [
-            new Grant { Identity = Pipeline, Verbs = [Verbs.Onboard, Verbs.Update, Verbs.Offboard], Rulesets = ["payments"] },
+            new Grant { Identity = Pipeline, Verbs = [Verbs.Onboard, Verbs.Update, Verbs.Offboard, Verbs.Bind], Rulesets = ["payments"] },
         ],
     };
 

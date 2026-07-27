@@ -4,17 +4,31 @@ using ControlPlane.Model;
 
 namespace ControlPlane.Policy;
 
-/// <summary>The three platform-granted verbs. Reads need none of them.</summary>
+/// <summary>The platform-granted verbs. Reads need none of them.</summary>
 public static class Verbs
 {
     public const string Onboard = "onboard";
     public const string Update = "update";
     public const string Offboard = "offboard";
+
+    /// <summary>
+    /// Authority to change a ruleset's <em>membership</em> (which subjects it governs) — separate
+    /// from <see cref="Update"/>, which edits hosts only. A software module grows over time, so a
+    /// new workload must be bindable to an existing ruleset without a destructive
+    /// offboard-and-re-onboard; but rebinding an identity under different rules is the sensitive
+    /// half of the write, so it needs its own verb. Trust-on-first-use grants it to the onboarding
+    /// owner alongside update/offboard.
+    /// </summary>
+    public const string Bind = "bind";
 }
 
 /// <summary>What a push would change, before it is applied. Returned by <c>:check</c> so a pipeline
 /// can gate on unexpected changes — the only control on widening an already-enforcing ruleset.</summary>
 public sealed record HostDiff(IReadOnlyList<string> Added, IReadOnlyList<string> Removed);
+
+/// <summary>A ruleset's membership delta, audited because moving a workload under a ruleset changes
+/// what that workload may reach — a widening the audit trail must record.</summary>
+public sealed record SubjectDiff(IReadOnlyList<string> Added, IReadOnlyList<string> Removed);
 
 public sealed record PolicyError(HttpStatusCode Status, string Message);
 
@@ -46,7 +60,7 @@ public static partial class RulesetPolicy
     {
         if (existing?.Owner is { } owner
             && string.Equals(owner, caller, StringComparison.OrdinalIgnoreCase)
-            && verb is Verbs.Update or Verbs.Offboard)
+            && verb is Verbs.Update or Verbs.Offboard or Verbs.Bind)
         {
             return true;
         }
@@ -186,6 +200,23 @@ public static partial class RulesetPolicy
             [.. after.Except(before, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal)],
             [.. before.Except(after, StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal)]);
     }
+
+    /// <summary>Membership delta, keyed the same way uniqueness is (<see cref="Subject.Key"/>), so a
+    /// netid and an appid never collide. Rendered to the audit trail, not to policy.</summary>
+    public static SubjectDiff DiffSubjects(IEnumerable<Subject> current, IEnumerable<Subject> proposed)
+    {
+        var before = current.ToDictionary(s => s.Key, s => s.ToString());
+        var after = proposed.ToDictionary(s => s.Key, s => s.ToString());
+
+        return new SubjectDiff(
+            [.. after.Keys.Except(before.Keys).Select(k => after[k]).Order(StringComparer.Ordinal)],
+            [.. before.Keys.Except(after.Keys).Select(k => before[k]).Order(StringComparer.Ordinal)]);
+    }
+
+    /// <summary>True when the two subject sets differ by <see cref="Subject.Key"/> — i.e. a push
+    /// changes membership rather than restating it. Restating unchanged subjects is not a change.</summary>
+    public static bool MembershipChanges(IEnumerable<Subject> current, IEnumerable<Subject> proposed) =>
+        !proposed.Select(s => s.Key).ToHashSet().SetEquals(current.Select(s => s.Key));
 
     /// <summary>
     /// <c>report</c> is the onboarding DEFAULT, not an override: a ruleset created without an

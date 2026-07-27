@@ -54,5 +54,21 @@ public sealed class AuditLog(ILogger<AuditLog> logger)
                 "audit: host {Host} REMOVED from ruleset {Ruleset} by {Identity}",
                 host, ruleset.Name, caller);
         }
+
+        // Membership changes are a widening in their own right — a bound workload gains the whole
+        // ruleset's egress — so they are audited beside the host changes.
+        foreach (var subject in outcome.SubjectDiff?.Added ?? [])
+        {
+            logger.LogInformation(
+                "audit: subject {Subject} BOUND to ruleset {Ruleset} by {Identity}",
+                subject, ruleset.Name, caller);
+        }
+
+        foreach (var subject in outcome.SubjectDiff?.Removed ?? [])
+        {
+            logger.LogInformation(
+                "audit: subject {Subject} UNBOUND from ruleset {Ruleset} by {Identity}",
+                subject, ruleset.Name, caller);
+        }
     }
 }

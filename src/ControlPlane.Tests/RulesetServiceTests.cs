@@ -187,10 +187,32 @@ public class RulesetServiceTests
         Assert.Equal(0, store.Writes);
     }
 
+    /// <summary>A module grows: the owner (who holds <c>bind</c> by trust-on-first-use) may add a
+    /// second workload to an existing ruleset without a destructive offboard-and-re-onboard.</summary>
     [Fact]
-    public async Task An_update_cannot_change_subjects()
+    public async Task An_owner_may_bind_a_new_subject()
     {
-        var (service, _) = Build(Seed(Enforcing("payments", ["a.example.com"], Pipeline)));
+        var (service, store) = Build(Seed(Enforcing("payments", ["a.example.com"], Pipeline, subject: Workload)));
+
+        var outcome = await service.PutAsync("payments", new PushRequest
+        {
+            Subjects = [new Subject { Appid = Workload }, new Subject { Appid = Stranger }],
+            Content = new RulesetContent { AllowedHosts = ["a.example.com"], Action = "enforce" },
+        }, Pipeline, false, default);
+
+        Assert.True(outcome.Succeeded, outcome.Error?.Message);
+        var stored = store.Current.Find("payments")!.Subjects.Select(s => s.Appid).ToHashSet();
+        Assert.Contains(Stranger, stored);
+        Assert.Contains(Workload, stored);
+    }
+
+    /// <summary>Membership is the sensitive half of a write: an identity that holds only <c>update</c>
+    /// (edits hosts) and is not the owner cannot move a workload under different rules.</summary>
+    [Fact]
+    public async Task An_update_without_bind_cannot_change_subjects()
+    {
+        // Owner is null, so Pipeline authorizes via its platform grant — which carries update, not bind.
+        var (service, store) = Build(Seed(Enforcing("payments", ["a.example.com"], owner: null)));
 
         var outcome = await service.PutAsync("payments", new PushRequest
         {
@@ -198,8 +220,28 @@ public class RulesetServiceTests
             Content = new RulesetContent { AllowedHosts = ["a.example.com"], Action = "enforce" },
         }, Pipeline, false, default);
 
-        Assert.Equal(HttpStatusCode.BadRequest, outcome.Error!.Status);
-        Assert.Contains("frozen", outcome.Error.Message);
+        Assert.Equal(HttpStatusCode.Forbidden, outcome.Error!.Status);
+        Assert.Contains("'bind'", outcome.Error.Message);
+        Assert.Equal(0, store.Writes);
+    }
+
+    /// <summary>One-to-one holds on a bind too: a subject already governed elsewhere cannot be pulled
+    /// into this ruleset.</summary>
+    [Fact]
+    public async Task Binding_a_subject_claimed_by_another_ruleset_is_rejected()
+    {
+        var (service, _) = Build(Seed(
+            Enforcing("payments", ["a.example.com"], Pipeline, subject: Workload),
+            Enforcing("analytics", ["b.example.com"], Platform, subject: Stranger)));
+
+        var outcome = await service.PutAsync("payments", new PushRequest
+        {
+            Subjects = [new Subject { Appid = Workload }, new Subject { Appid = Stranger }],
+            Content = new RulesetContent { AllowedHosts = ["a.example.com"], Action = "enforce" },
+        }, Pipeline, false, default);
+
+        Assert.Equal(HttpStatusCode.Conflict, outcome.Error!.Status);
+        Assert.Contains("already belongs to ruleset 'analytics'", outcome.Error.Message);
     }
 
     /// <summary>A desired-state pipeline pushes one file every run, so restating the stored

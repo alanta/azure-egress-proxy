@@ -31,7 +31,8 @@ public sealed record Ruleset
 {
     public required string Name { get; init; }
 
-    /// <summary>Write-once at onboard: an update can never change these (anti-hijack).</summary>
+    /// <summary>Set at onboard. A plain update never touches these (anti-hijack); changing membership
+    /// afterwards needs the <c>bind</c> verb, which the onboarding owner holds by trust-on-first-use.</summary>
     public List<Subject> Subjects { get; init; } = [];
 
     public RulesetContent Content { get; init; } = new();
@@ -39,7 +40,7 @@ public sealed record Ruleset
     /// <summary>Reserved for the management portal (Mode 3); not consulted by the Mode 2 write path.</summary>
     public Acl? Acl { get; init; }
 
-    /// <summary>Trust-on-first-use: the identity that onboarded this ruleset. Holds update/offboard on it.</summary>
+    /// <summary>Trust-on-first-use: the identity that onboarded this ruleset. Holds update/offboard/bind on it.</summary>
     public string? Owner { get; init; }
 }
 
@@ -83,7 +84,7 @@ public sealed record Grant
     public List<string> Verbs { get; init; } = [];
 
     /// <summary>
-    /// Scopes update/offboard to these rulesets. Null means every ruleset (platform-team grants).
+    /// Scopes update/offboard/bind to these rulesets. Null means every ruleset (platform-team grants).
     /// Never scopes onboard, which is registry-wide by nature.
     /// </summary>
     public List<string>? Rulesets { get; init; }

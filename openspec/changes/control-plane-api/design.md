@@ -40,8 +40,6 @@ Constraints:
 - Management portal / human `edit` verb (Mode 3).
 - RBAC administration through the control-plane API — grants are platform-team managed out
   of band (manual) for now.
-- Reassigning `subjects` after onboard via the API (write-once at onboard; later change is
-  a platform op or offboard-and-re-onboard).
 - The control plane verifying subject provenance against Azure (ARM/Graph).
 - Ruleset composition, many-to-many, shared trusted-baseline ruleset (use `fallback`).
 - Per-ruleset blobs and any compositor step.
@@ -72,19 +70,20 @@ compositor. *Alternative considered:* many-to-many with a shared platform baseli
 (elegant, delivers the "trusted services baseline" roadmap item for free) — deferred; the
 existing `fallback` block covers the baseline need for now.
 
-### 2. Platform-managed RBAC (three verbs), enforced not investigated
+### 2. Platform-managed RBAC (four verbs), enforced not investigated
 
 Two identities are distinct: the **subject** (whose traffic the ruleset governs, the
 workload's runtime MI) and the **writer** (the pipeline's service-connection identity). If
 they were the same, a compromised workload could widen its own allowlist — the exact attack
 the proxy exists to stop. `writer ≠ subject` is enforced at write time.
 
-The **platform team owns the trust mapping.** They grant service-connection identities three
+The **platform team owns the trust mapping.** They grant service-connection identities four
 verbs, in a platform-owned RBAC config loaded read-only by the API:
 
 ```
   onboard  — create a new ruleset (registry-scoped; the ruleset doesn't exist yet)
-  update   — push content to an existing ruleset
+  update   — push content (hosts + action) to an existing ruleset
+  bind     — change an existing ruleset's subjects (add/remove workloads)
   offboard — remove a ruleset, freeing its subjects
 ```
 
@@ -97,15 +96,21 @@ knowledge lives.
 
 *Onboarding (trust-on-first-use):* a holder of `onboard` creates a ruleset on first push,
 declaring its `subjects`; the creator is recorded as the ruleset's owner (gains
-`update`/`offboard`). So onboarding costs one platform grant, not a ticket per ruleset. The
-platform team can override any ruleset's grants afterward (manually now; via the API later,
-out of scope).
+`update`/`bind`/`offboard`). So onboarding, and growing the module afterwards, cost one
+platform grant, not a ticket per ruleset. The platform team can override any ruleset's grants
+afterward (manually now; via the API later, out of scope).
 
-*Subjects are write-once at onboard, frozen for `update`.* `onboard` sets `subjects`;
-`update` writes `allowed_hosts` + `action` only. Consequences:
-- Steady-state identity-hijack is impossible — `update` can't touch subjects.
+*Membership is separated from content; `bind` gates it.* `onboard` sets `subjects`; a plain
+`update` writes `allowed_hosts` + `action` only and can never touch `subjects`. A real module
+grows — new workloads, each with its own MI, join the same policy — so changing membership is
+a first-class operation, but the *sensitive* half of a write: it requires the `bind` verb (an
+add/remove is validated and uniqueness-checked exactly like an onboard). Consequences:
+- Steady-state identity-hijack is impossible — the routine, high-frequency `update` verb can't
+  move a workload under different rules; only `bind` can, and it runs the same checks.
 - Uniqueness (first-come) protects already-onboarded subjects; the platform's scoping of who
-  holds `onboard` bounds squatting on un-onboarded ones. No ARM verification needed.
+  holds `onboard`/`bind` bounds squatting on un-onboarded ones. No ARM verification needed.
+- Growing a module is non-destructive — no offboard-and-re-onboard, which would free the
+  subjects (a fail-closed gap) and drop the recorded owner.
 
 *Alternative considered:* ARM/Graph-verified subject-claim scopes (control plane confirms
 the subject's MI lives in a scope the creator controls). Rejected — overreaches the control
@@ -274,7 +279,7 @@ DELETE /rulesets/{name}       offboard: remove the ruleset, free its subjects (f
    and switch the proxy's identity to `Storage Blob Data Reader`. Grant pipelines no blob
    role.
 4. Deploy the API (Container App); exercise Mode 2 end-to-end via `curl` + a service
-   principal — onboard, update, offboard — verifying proxy enforcement changes after a push.
+   principal — onboard, update, bind, offboard — verifying proxy enforcement changes after a push.
 5. Rollback: blob versioning + soft delete revert any bad write. Where the control plane is
    not deployed, the system runs Mode 1 (direct-write GitOps) with no API in the path.
 

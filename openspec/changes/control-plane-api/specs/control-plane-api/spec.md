@@ -73,10 +73,10 @@ tokens. Requests without a valid token SHALL be rejected.
 The control plane SHALL allow any authenticated caller to read rulesets (`GET /rulesets`,
 `GET /rulesets/{name}`) regardless of RBAC — the full egress posture is transparent. Writes
 SHALL be authorized against platform-managed RBAC grants for the caller's identity:
-`onboard` to create a ruleset, `update` to replace an existing ruleset's content, and
-`offboard` to remove one. The control plane SHALL enforce these grants without consulting
-Azure (ARM/Graph) to verify subject ownership. A caller lacking the required verb SHALL be
-denied even with a valid token.
+`onboard` to create a ruleset, `update` to replace an existing ruleset's content, `bind` to
+change an existing ruleset's subjects, and `offboard` to remove one. The control plane SHALL
+enforce these grants without consulting Azure (ARM/Graph) to verify subject ownership. A
+caller lacking the required verb SHALL be denied even with a valid token.
 
 #### Scenario: Any authenticated caller may list all rulesets
 
@@ -98,15 +98,15 @@ denied even with a valid token.
 
 A caller holding the `onboard` verb SHALL be able to create a new ruleset by `PUT` to an
 absent name, supplying its `subjects`. On success the control plane SHALL record the creating
-identity as the ruleset's owner, granting it `update` and `offboard` on that ruleset
-(trust-on-first-use). `subjects` SHALL be settable only at onboard; a subsequent `update`
-SHALL NOT change `subjects` or `acl`.
+identity as the ruleset's owner, granting it `update`, `bind`, and `offboard` on that ruleset
+(trust-on-first-use). `subjects` SHALL be set at onboard; a plain `update` SHALL NOT change
+`subjects` or `acl`, and changing membership afterwards SHALL require the `bind` verb.
 
 #### Scenario: Onboard creates a ruleset and assigns ownership
 
 - **WHEN** a caller with `onboard` sends `PUT /rulesets/{new-name}` with `subjects` and
   content
-- **THEN** the ruleset is created, the caller is recorded as owner (gaining `update`/
+- **THEN** the ruleset is created, the caller is recorded as owner (gaining `update`/`bind`/
   `offboard`), and the ruleset is stored with the action it requested, defaulting to `report`
   when none was given
 
@@ -115,13 +115,19 @@ SHALL NOT change `subjects` or `acl`.
 - **WHEN** a caller lacking `onboard` sends `PUT` to an absent ruleset name
 - **THEN** the API SHALL respond with `403 Forbidden` and create nothing
 
-#### Scenario: Update cannot change subjects
+#### Scenario: Update without bind cannot change subjects
 
-- **WHEN** a caller sends `PUT` to an existing ruleset with a `subjects` field that differs
-  from the stored subjects
-- **THEN** the API SHALL reject the request (content-only update). A `subjects` field that
-  merely restates the stored subjects is accepted unchanged, so a desired-state pipeline can
-  keep pushing one file.
+- **WHEN** a caller holding only `update` sends `PUT` to an existing ruleset with a `subjects`
+  field that differs from the stored subjects
+- **THEN** the API SHALL respond with `403 Forbidden` and change nothing. A `subjects` field
+  that merely restates the stored subjects is accepted unchanged, so a desired-state pipeline
+  can keep pushing one file.
+
+#### Scenario: Bind changes membership without a destructive re-onboard
+
+- **WHEN** a caller holding `bind` (or the owner) sends `PUT` adding a new subject to an
+  existing ruleset, and the subject passes uniqueness and writer≠subject checks
+- **THEN** the ruleset's subjects are updated in place and the binding is audited
 
 ### Requirement: Blob is the control plane's private store
 

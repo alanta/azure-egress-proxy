@@ -24,15 +24,17 @@
 # what makes the negative cases below testable.
 
 @pipelineId = 22222222-2222-2222-2222-222222222222
-# registry-wide onboard; update/offboard scoped to the sample-app ruleset
+# registry-wide onboard; update/offboard/bind scoped to the sample-app ruleset
 @platformId = 99999999-9999-9999-9999-999999999999
-# unscoped: every verb on every ruleset
+# unscoped: every verb on every ruleset, including rebinding subjects
 @workloadId = 11111111-1111-1111-1111-111111111111
 # a GOVERNED subject (sample-app) — must never be able to write
 @strangerId = 44444444-4444-4444-4444-444444444444
 # holds no grant at all
 @subjectId  = 33333333-3333-3333-3333-333333333333
 # the workload the "payments" ruleset below will govern
+@updaterId  = 55555555-5555-5555-5555-555555555555
+# holds `update` on payments/sample-app but NOT `bind` — content only
 
 ### 0a. Get a token for the pipeline identity. Re-send when it expires (TTL is 5 minutes).
 # @name pipelineToken
@@ -50,12 +52,17 @@ GET {{idp}}/token?appid={{workloadId}}
 # @name strangerToken
 GET {{idp}}/token?appid={{strangerId}}
 
+###
+# @name updaterToken
+GET {{idp}}/token?appid={{updaterId}}
+
 # If your client does not resolve these request variables, paste a token in by hand:
 #   @pipeline = eyJhbGciOi...
 @pipeline = {{pipelineToken.response.body.*}}
 @platform = {{platformToken.response.body.*}}
 @workload = {{workloadToken.response.body.*}}
 @stranger = {{strangerToken.response.body.*}}
+@updater  = {{updaterToken.response.body.*}}
 
 
 # ==============================================================================================
@@ -101,7 +108,7 @@ Authorization: Bearer {{stranger}}
 ### 3. Onboard "payments" WITHOUT an action.
 # -> 201 with "action":"report" — the on-ramp default for a workload whose egress you do not
 #    yet know. Also note "owner": the caller is recorded trust-on-first-use and now holds
-#    update/offboard on it without any platform grant.
+#    update/offboard/bind on it without any platform grant.
 PUT {{api}}/rulesets/payments
 Authorization: Bearer {{pipeline}}
 Content-Type: application/json
@@ -234,15 +241,15 @@ Content-Type: application/json
   "content": { "allowed_hosts": ["evil.example.com"] }
 }
 
-### 13. Subjects are frozen after onboard -> 400.
-# Steady-state identity hijack is impossible: an update can never move a different workload
-# under these rules.
+### 13. The acl is still frozen after onboard -> 400.
+# Only subject membership got a verb to unlock it (see §20); the acl has none, so it remains
+# write-once at onboard.
 PUT {{api}}/rulesets/payments
 Authorization: Bearer {{pipeline}}
 Content-Type: application/json
 
 {
-  "subjects": [{ "appid": "66666666-6666-6666-6666-666666666666" }],
+  "acl": { "edit": ["mallory"], "push": [], "admin": [] },
   "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
 }
 
@@ -305,10 +312,170 @@ Content-Type: application/json
 
 
 # ==============================================================================================
+# Subject membership — the `bind` verb
+# ==============================================================================================
+# Changing WHICH workloads a ruleset governs is the sensitive half of a write, so it is a separate
+# permission from editing hosts. `bind` is held by the ruleset's owner via trust-on-first-use, or
+# granted by the platform. Restating an unchanged subject list needs nothing (see §9), so a
+# desired-state pipeline holding only `update` keeps working.
+#
+# The response reports both halves of the change: `added`/`removed` for hosts, `bound`/`unbound`
+# for membership. `:check` returns the same shape without writing, so a pipeline can gate on a
+# bind before making it. The same events are in the API log as `subject ... BOUND to ruleset`.
+
+### 20. Baseline: what does payments govern right now?
+GET {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+
+### 21. Bind a second workload. The pipeline onboarded payments, so it owns it and holds `bind`
+# without any platform grant naming it. -> 200, subjects now lists both. Audit: subject ... BOUND.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{subjectId}}" },
+    { "appid": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" }
+  ],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 22. Unbind: the subject list is a full replace, like allowed_hosts. Dropping one frees that
+# workload, which falls to the fallback/deny block on the next reload. Audit: subject ... UNBOUND.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{subjectId}}" }],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 23. A bind still cannot steal a subject another ruleset already governs -> 409.
+# First-come uniqueness is what protects an onboarded workload; `bind` unlocks membership, not
+# other people's membership. (Run §28 first so `billing` exists.)
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{subjectId}}" },
+    { "appid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }
+  ],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 24. A bound subject is validated like any other -> 400 (octets out of range).
+# The proxy drops a netid it cannot parse, so a ruleset that accepted this would look configured
+# and govern nothing.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{subjectId}}" },
+    { "netid": "999.999.999.999/24" }
+  ],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 25. A caller may not bind ITSELF as a subject -> 403.
+# writer != subject survives the new verb: `bind` would otherwise be a way to become governed by
+# the rules you are allowed to write, which is exactly the loop the proxy exists to prevent.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{subjectId}}" },
+    { "appid": "{{pipelineId}}" }
+  ],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 26. Binding through a platform grant rather than ownership: the pipeline's seeded grant scopes
+# update/offboard/bind to sample-app, so it may add a second workload there as the module grows.
+# -> 200. (§26b restores sample-app; leave it bound and the proxy renders two entries.)
+PUT {{api}}/rulesets/sample-app
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{workloadId}}" },
+    { "appid": "cccccccc-cccc-cccc-cccc-cccccccccccc" }
+  ],
+  "content": { "allowed_hosts": ["api.github.com"], "action": "enforce" }
+}
+
+### 26b. Restore sample-app to its single subject.
+PUT {{api}}/rulesets/sample-app
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{workloadId}}" }],
+  "content": { "allowed_hosts": ["api.github.com"], "action": "enforce" }
+}
+
+### 26c. No grant at all -> 403, as for any other write.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{stranger}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "dddddddd-dddd-dddd-dddd-dddddddddddd" }],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 26d. `update` alone still pushes content -> 200.
+# This identity holds update on payments and nothing else, which is the ordinary desired-state
+# pipeline: it owns its hosts, not the question of which workloads the rules apply to.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{updater}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["api.stripe.com", "api.vendor.com"], "action": "enforce" }
+}
+
+### 26e. ...but the same identity cannot change membership -> 403 naming the missing 'bind'.
+# This is the case that shows bind is a SEPARATE permission rather than part of update: the caller
+# is authorized to write this ruleset, and is still refused the sensitive half of the write.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{updater}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "{{subjectId}}" },
+    { "appid": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee" }
+  ],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 26f. Restating the SAME membership needs no bind -> 200.
+# The gate is on change, not on mentioning subjects, so a desired-state pipeline holding only
+# `update` can keep pushing one file that happens to include its subject list.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{updater}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{subjectId}}" }],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+
+# ==============================================================================================
 # Multi-subject rulesets and the platform identity
 # ==============================================================================================
 
-### 20. A ruleset governs one or more clients. This one takes an appid AND a source CIDR;
+### 27. A ruleset governs one or more clients. This one takes an appid AND a source CIDR;
 # it renders to one allowlist entry per subject, both carrying the same content.
 PUT {{api}}/rulesets/billing
 Authorization: Bearer {{platform}}
@@ -325,7 +492,7 @@ Content-Type: application/json
   }
 }
 
-### 21. The unscoped platform grant may write any ruleset, including one it does not own
+### 28. The unscoped platform grant may write any ruleset, including one it does not own
 PUT {{api}}/rulesets/payments
 Authorization: Bearer {{platform}}
 Content-Type: application/json
@@ -339,19 +506,19 @@ Content-Type: application/json
 # Offboard
 # ==============================================================================================
 
-### 22. Offboard -> the subjects are freed and fall to the fallback/deny block on the next
+### 29. Offboard -> the subjects are freed and fall to the fallback/deny block on the next
 # proxy reload. Decommission is fail-closed by construction.
 DELETE {{api}}/rulesets/payments
 Authorization: Bearer {{pipeline}}
 
-### 23. Offboarding it again -> 404
+### 30. Offboarding it again -> 404
 DELETE {{api}}/rulesets/payments
 Authorization: Bearer {{pipeline}}
 
-### 24. Clean up the multi-subject ruleset too
+### 31. Clean up the multi-subject ruleset too
 DELETE {{api}}/rulesets/billing
 Authorization: Bearer {{platform}}
 
-### 25. Final state — back to just the seeded sample-app ruleset
+### 32. Final state — back to just the seeded sample-app ruleset
 GET {{api}}/rulesets
 Authorization: Bearer {{platform}}
