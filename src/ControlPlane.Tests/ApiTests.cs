@@ -7,7 +7,8 @@ using ControlPlane.Policy;
 
 namespace ControlPlane.Tests;
 
-public class ApiTests(ControlPlaneFixture fixture) : IClassFixture<ControlPlaneFixture>
+[Collection(ControlPlaneCollection.Name)]
+public class ApiTests(ControlPlaneFixture fixture)
 {
     private const string Pipeline = "22222222-2222-2222-2222-222222222222";
     private const string Stranger = "44444444-4444-4444-4444-444444444444";

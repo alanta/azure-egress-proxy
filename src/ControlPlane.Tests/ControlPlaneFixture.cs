@@ -18,8 +18,25 @@ using Microsoft.IdentityModel.Tokens;
 namespace ControlPlane.Tests;
 
 /// <summary>
+/// Ties every class that needs the hosted API into one collection, so xunit builds a single
+/// <see cref="ControlPlaneFixture"/> and runs those classes one at a time.
+///
+/// Both are load-bearing. The fixture publishes its JWKS URL through process-global environment
+/// variables, so a second instance would overwrite the first's and leave one host validating
+/// tokens against the other's signing key — every valid token in that class rejected as 401. And
+/// the fixture's store is a singleton the API resolves once, so two classes writing to it
+/// concurrently would see each other's state.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class ControlPlaneCollection : ICollectionFixture<ControlPlaneFixture>
+{
+    public const string Name = "control-plane";
+}
+
+/// <summary>
 /// Hosts the API against a real JWKS endpoint and an in-memory store, so the authN tests exercise
 /// the genuine RS256/JWKS/iss/aud/exp path the proxy also uses rather than a stubbed handler.
+/// Shared through <see cref="ControlPlaneCollection"/>; never use it as a class fixture.
 /// </summary>
 public sealed class ControlPlaneFixture : IAsyncLifetime
 {
@@ -38,7 +55,8 @@ public sealed class ControlPlaneFixture : IAsyncLifetime
         _idp = await StartJwksServerAsync();
 
         // Program reads these during builder configuration, before any test hook could run, so
-        // they have to be in the environment.
+        // they have to be in the environment. That makes them process-global, which is why only
+        // one fixture may exist per run — see ControlPlaneCollection.
         Environment.SetEnvironmentVariable("JWKS_URL", $"{Address(_idp)}/jwks");
         Environment.SetEnvironmentVariable("EXPECT_ISS", Issuer);
         Environment.SetEnvironmentVariable("EXPECT_AUD", Audience);
