@@ -3,6 +3,11 @@ using System.Text.Json.Serialization;
 
 namespace ControlPlane.Model;
 
+// The collection properties below normalize null in their init accessor. Request JSON may legally
+// say "allowed_hosts": null, and System.Text.Json writes that null straight over the initializer —
+// so a declared-non-nullable list arrives null and every consumer that iterates it throws a 500
+// instead of returning a validation error. Absent and explicitly-null both mean "empty" here.
+
 /// <summary>
 /// The control plane's entire internal state — a SINGLE blob (<c>egress-config/rulesets.json</c>).
 /// This is the authored truth; it is NOT what the proxy reads. The proxy's document
@@ -11,14 +16,14 @@ namespace ControlPlane.Model;
 /// </summary>
 public sealed record StateDocument
 {
-    public List<Ruleset> Rulesets { get; init; } = [];
+    public List<Ruleset> Rulesets { get; init => field = value ?? []; } = [];
 
     /// <summary>
     /// Platform-owned RBAC. It shares the blob with the rulesets, so the "the API cannot widen
     /// its own authority" property is enforced in code rather than by storage permissions: every
     /// write path copies this list through untouched (see <see cref="RulesetStore"/>).
     /// </summary>
-    public List<Grant> Grants { get; init; } = [];
+    public List<Grant> Grants { get; init => field = value ?? []; } = [];
 
     /// <summary>Platform baseline for sources matching no ruleset. Absent or empty => deny-all.</summary>
     public Fallback? Fallback { get; init; }
@@ -33,9 +38,9 @@ public sealed record Ruleset
 
     /// <summary>Set at onboard. A plain update never touches these (anti-hijack); changing membership
     /// afterwards needs the <c>bind</c> verb, which the onboarding owner holds by trust-on-first-use.</summary>
-    public List<Subject> Subjects { get; init; } = [];
+    public List<Subject> Subjects { get; init => field = value ?? []; } = [];
 
-    public RulesetContent Content { get; init; } = new();
+    public RulesetContent Content { get; init => field = value ?? new(); } = new();
 
     /// <summary>Reserved for the management portal (Mode 3); not consulted by the Mode 2 write path.</summary>
     public Acl? Acl { get; init; }
@@ -61,7 +66,7 @@ public sealed record Subject
 /// <summary>The writable part of a ruleset — what an update replaces, in full.</summary>
 public sealed record RulesetContent
 {
-    public List<string> AllowedHosts { get; init; } = [];
+    public List<string> AllowedHosts { get; init => field = value ?? []; } = [];
 
     /// <summary>
     /// Uniform across the whole ruleset: a ruleset has exactly one action and its hosts are never
@@ -73,15 +78,15 @@ public sealed record RulesetContent
 
 public sealed record Acl
 {
-    public List<string> Edit { get; init; } = [];
-    public List<string> Push { get; init; } = [];
-    public List<string> Admin { get; init; } = [];
+    public List<string> Edit { get; init => field = value ?? []; } = [];
+    public List<string> Push { get; init => field = value ?? []; } = [];
+    public List<string> Admin { get; init => field = value ?? []; } = [];
 }
 
 public sealed record Grant
 {
     public required string Identity { get; init; }
-    public List<string> Verbs { get; init; } = [];
+    public List<string> Verbs { get; init => field = value ?? []; } = [];
 
     /// <summary>
     /// Scopes update/offboard/bind to these rulesets. Null means every ruleset (platform-team grants).
@@ -94,7 +99,7 @@ public sealed record Grant
 
 public sealed record Fallback
 {
-    public List<string> AllowedHosts { get; init; } = [];
+    public List<string> AllowedHosts { get; init => field = value ?? []; } = [];
 }
 
 public static class StateJson

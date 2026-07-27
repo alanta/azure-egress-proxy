@@ -359,8 +359,14 @@ PY
 )"
   rulesets_file="${RULESETS_FILE:-$repo_root/allowlist/rulesets.json}"
 
+  # Patch a copy: the default source is the repo's tracked rulesets.json, and rewriting it in
+  # place would leave the working tree dirty and feed an already-patched file to the next run.
+  rulesets_patched="$(mktemp -t rulesets.XXXXXX.json)"
+  trap 'rm -f "$rulesets_patched"' EXIT
+  cp "$rulesets_file" "$rulesets_patched"
+
   step "Patching rulesets with sample-app client id ($sample_client_id)"
-  python3 - "$rulesets_file" "$sample_client_id" <<'PY'
+  python3 - "$rulesets_patched" "$sample_client_id" <<'PY'
 import json,sys
 path,appid=sys.argv[1],sys.argv[2]
 doc=json.load(open(path,encoding="utf-8"))
@@ -376,7 +382,7 @@ PY
     --account-name "$allowlist_account" \
     --container-name "$allowlist_container" \
     --name "$rulesets_blob" \
-    --file "$rulesets_file" \
+    --file "$rulesets_patched" \
     --auth-mode login \
     --overwrite \
     --only-show-errors >/dev/null

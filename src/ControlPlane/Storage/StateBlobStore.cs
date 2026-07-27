@@ -62,11 +62,16 @@ public sealed class StateBlobStore : IStateBlobStore
     /// </summary>
     internal StateBlobStore(BlobStoreOptions options, BlobClientOptions? clientOptions)
     {
-        var service = options.ConnectionString is { Length: > 0 } connectionString
-            ? new BlobServiceClient(connectionString, clientOptions)
+        // Whitespace counts as unset: a blank value in config is an omission, and taking the
+        // connection-string path on one fails deep in the SDK's parser instead of pointing at
+        // the setting that is actually missing.
+        var service = !string.IsNullOrWhiteSpace(options.ConnectionString)
+            ? new BlobServiceClient(options.ConnectionString, clientOptions)
             : new BlobServiceClient(
-                new Uri(options.ServiceUri ?? throw new InvalidOperationException(
-                    "configure ControlPlane:Storage:ServiceUri (Azure) or :ConnectionString (Azurite)")),
+                new Uri(string.IsNullOrWhiteSpace(options.ServiceUri)
+                    ? throw new InvalidOperationException(
+                        "configure ControlPlane:Storage:ServiceUri (Azure) or :ConnectionString (Azurite)")
+                    : options.ServiceUri),
                 new DefaultAzureCredential(),
                 clientOptions);
 

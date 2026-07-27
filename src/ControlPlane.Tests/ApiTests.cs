@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using ControlPlane.Model;
 using ControlPlane.Policy;
@@ -243,6 +244,25 @@ public class ApiTests(ControlPlaneFixture fixture)
         var response = await client.PutAsJsonAsync("/rulesets/payments", Push(["*.example.com"], "enforce"));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>An explicitly null list is the same as an absent one: a hand-written client that
+    /// serializes its empty fields as null gets the empty-push semantics, not a 500 from a
+    /// non-nullable property that System.Text.Json wrote null over.</summary>
+    [Theory]
+    [InlineData("""{"content":{"allowed_hosts":null,"action":"enforce"}}""")]
+    [InlineData("""{"content":null}""")]
+    [InlineData("""{"content":{"allowed_hosts":[]},"acl":{"edit":null,"push":null,"admin":null}}""")]
+    public async Task An_explicitly_null_list_is_treated_as_empty(string body)
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var response = await client.PutAsync(
+            "/rulesets/payments", new StringContent(body, Encoding.UTF8, "application/json"));
+
+        response.EnsureSuccessStatusCode();
+        var stored = (await fixture.Store.ReadAsync(default)).State.Find("payments");
+        Assert.Empty(stored!.Content.AllowedHosts);
     }
 
     private static async Task<string?> ActionOf(HttpResponseMessage response) =>
