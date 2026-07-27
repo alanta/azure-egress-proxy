@@ -31,7 +31,9 @@ scripts/deploy.sh
 | `proxyBinarySha256` | _(required)_ | SHA256 for binary integrity check |
 | `vmAdminPublicKey` | _(required)_ | SSH public key for break-glass VM access |
 | `sampleAppImage` | `mcr.microsoft.com/dotnet/samples:aspnetapp` | Sample app image (deploy.sh overrides this with the ACR-imported release image) |
-| `containerRegistryName` | `''` | Existing ACR in the spoke RG hosting the sample image; empty disables ACR wiring |
+| `containerRegistryName` | `''` | Existing ACR in the spoke RG hosting the sample/control-plane images; empty disables ACR wiring (and the control plane's `AcrPull`) |
+| `deployControlPlane` | `false` | Deploy the control-plane API (Mode 2). Its identity becomes the only writer of the allowlist blobs |
+| `controlPlaneImage` | `''` | Control-plane image; required when `deployControlPlane` is true (deploy.sh sets this to the ACR-imported release image) |
 | `proxyVmSku` | `Standard_B2pts_v2` | VMSS instance SKU (smallest ARM64 burstable; see the burst matrix below) |
 | `proxyInstanceCount` | `2` | VMSS instance count |
 | `proxyPublicIpPrefixLength` | `31` | Known egress CIDR size |
@@ -52,6 +54,7 @@ It uses **token version v2** (`requestedAccessTokenVersion=2`) and emits:
 
 - `scripts/setup-identity.sh`: idempotent app registration + generated identity file.
 - `scripts/deploy.sh`: runs identity setup, creates a Basic ACR and imports the sample-app image from GHCR (set `GHCR_USERNAME`/`GHCR_TOKEN` while the source image is private, or `SAMPLE_APP_IMAGE` to skip the ACR), deploys infra, patches `allowlist/allowlist.json` with sample-app MI client ID, uploads blob (`--auth-mode login`), prints the sample app URL.
+  `DEPLOY_CONTROL_PLANE=true` additionally imports the `control-plane` image, deploys the control plane (Mode 2) and seeds its `rulesets.json` state blob; `CONTROL_PLANE_IMAGE` skips the import, `CONTROL_PLANE_IMAGE_SOURCE` picks a different source image. See [docs/control-plane.md](../docs/control-plane.md).
 - `scripts/demo.sh`: exercises allowed/denied endpoints and prints KQL; optional `ADD_DENIED_HOST=1` shows allowlist propagation and reverts.
 - `scripts/teardown.sh`: deletes both RGs; optional `DELETE_APP_REGISTRATION=1` removes the app registration.
 

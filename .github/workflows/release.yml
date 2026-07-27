@@ -147,3 +147,15 @@ jobs:
           tags: |
             ghcr.io/alanta/azure-egress-proxy/sample-app:${{ needs.build.outputs.version }}
             ghcr.io/alanta/azure-egress-proxy/sample-app:latest
+
+      - name: Build and push control-plane image
+        if: ${{ hashFiles('src/ControlPlane/Dockerfile') != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/ControlPlane/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/alanta/azure-egress-proxy/control-plane:${{ needs.build.outputs.version }}
+            ghcr.io/alanta/azure-egress-proxy/control-plane:latest

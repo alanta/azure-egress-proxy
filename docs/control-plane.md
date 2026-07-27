@@ -67,7 +67,8 @@ the proxy reads the blob directly, so egress enforcement survives control-plane 
 Both topologies end at the same `allowlist.json`, so switching is a role-assignment change
 plus a seed, not a migration:
 
-- **Mode 1 → Mode 2**: deploy the control plane (`deployControlPlane=true`), seed
+- **Mode 1 → Mode 2**: deploy the control plane (`DEPLOY_CONTROL_PLANE=true ./scripts/deploy.sh`,
+  or `deployControlPlane=true` straight to bicep — see below), seed
   `rulesets.json` with the rulesets equivalent to today's modules and the platform `grants`,
   then stop the CI allowlist publish. From that point CI publishes by *calling the API*.
 - **Mode 2 → Mode 1**: stop calling the API, re-point CI at the blob, and keep the last
@@ -267,25 +268,37 @@ identity keeps `Storage Blob Data Contributor`, and
 
 ### Control-plane topology (Mode 2)
 
-1. **Build and push the control-plane image** to the ACR the deployment uses (it must be
-   pullable under the egress floor — see [production-hardening.md](production-hardening.md)).
-2. **Deploy with the control plane enabled:**
+1. **Deploy with the control plane enabled.** For the demo, one switch does all of it:
+   ```bash
+   DEPLOY_CONTROL_PLANE=true ./scripts/deploy.sh
+   ```
+   `deploy.sh` imports the released `control-plane` image from GHCR into the demo ACR (GHCR is
+   not reachable from the CAE subnet under the egress floor, so it has to come through the
+   registry the floor opens), passes `deployControlPlane`/`controlPlaneImage`, and seeds the
+   state blob. Set `CONTROL_PLANE_IMAGE` to skip the import if you host the image yourself;
+   `CONTROL_PLANE_IMAGE_SOURCE` overrides which image is imported.
+
+   Driving bicep directly instead:
    ```bash
    az deployment sub create --template-file infra/main.bicep \
      --parameters deployControlPlane=true \
-                  controlPlaneImage=<acr>.azurecr.io/control-plane:<tag> ...
+                  controlPlaneImage=<acr>.azurecr.io/control-plane:<tag> \
+                  containerRegistryName=<acr> ...
    ```
-   This creates the control plane's user-assigned identity **in the hub**, next to the storage
-   it owns, grants it `Storage Blob Data Contributor`, and runs its container in the spoke's
-   managed environment. The proxy's identity keeps `Storage Blob Data Reader`.
-3. **Seed the state blob.** [`scripts/deploy.sh`](../scripts/deploy.sh) does this automatically
+   `containerRegistryName` is what grants the control plane's identity `AcrPull`; without it the
+   container app has no way to pull from the registry.
+
+   Either route creates the control plane's user-assigned identity **in the hub**, next to the
+   storage it owns, grants it `Storage Blob Data Contributor`, and runs its container in the
+   spoke's managed environment. The proxy's identity keeps `Storage Blob Data Reader`.
+2. **Seed the state blob.** [`scripts/deploy.sh`](../scripts/deploy.sh) does this automatically
    when the control plane is deployed: it uploads
    [`allowlist/rulesets.json`](../allowlist/rulesets.json) — rulesets **and** the platform
    `grants` — to `egress-config/rulesets.json`, patched with the sample app's client id.
-4. **Grant the team pipelines.** Add their service-connection identities to `grants`, usually
+3. **Grant the team pipelines.** Add their service-connection identities to `grants`, usually
    just `onboard`, since trust-on-first-use covers everything they create. Editing `grants` is
    a platform-team blob write; the API will never do it.
-5. **Give no workload pipeline a blob role.** That is the whole point: they reach the config
+4. **Give no workload pipeline a blob role.** That is the whole point: they reach the config
    only through the API.
 
 ### Configuration (env)
