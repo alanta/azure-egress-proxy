@@ -26,9 +26,9 @@ Constraints:
 ## Goals / Non-Goals
 
 **Goals:**
-- A ruleset model that generalizes today's "module" and carries subjects + an acl.
+- A ruleset model that replaces "module" as the authored unit and carries subjects + an acl.
 - A control-plane API (Mode 2) that validates and applies pipeline pushes to the private
-  blob store, authorized by platform-managed RBAC verbs, with forced `report` on new hosts.
+  blob store, authorized by platform-managed RBAC verbs, with `report` as the onboard default.
 - Optimistic concurrency that tolerates concurrent pushes to *different* rulesets without
   spurious failures.
 - Preserve every security property of the current model, and add one: a compromised
@@ -49,10 +49,20 @@ Constraints:
 
 ## Decisions
 
-### 1. Ruleset replaces "module"; a subject belongs to exactly one ruleset
+### 1. Ruleset is the authored unit; a subject belongs to exactly one ruleset
 
-A ruleset is `{ name, subjects[], content{ allowed_hosts[], action }, acl{ edit, push, admin } }`.
+A ruleset is the set of rules applied to one or more clients of the proxy:
+`{ name, subjects[], content{ allowed_hosts[], action }, acl{ edit, push, admin } }`.
 `subjects` is a list of workload identities (`appid`) and/or `netid`s.
+
+*Terminology.* "Ruleset" replaces "module", which was confusing — it suggested a code artifact
+rather than a policy unit. The rename is complete at the authoring layer: teams write rulesets,
+the API speaks rulesets, and `docs/` says ruleset. The word `modules` survives in exactly one
+place — the `allowlist.json` key the Go proxy parses — because that document is the proxy's
+frozen wire format. Under Mode 2 nobody authors it by hand, so the old term is now an
+implementation detail of one file rather than a concept anyone has to learn. Under Mode 1
+(GitOps, no control plane) teams still author `allowlist.json` directly and so still meet
+`modules`; renaming that key is a proxy change and is out of scope here.
 
 *Why one-to-one (no composition):* union/precedence semantics are real complexity
 (host-level action conflicts, priority ordering, a compositor in the renderer). One-to-one
@@ -87,7 +97,7 @@ knowledge lives.
 
 *Onboarding (trust-on-first-use):* a holder of `onboard` creates a ruleset on first push,
 declaring its `subjects`; the creator is recorded as the ruleset's owner (gains
-`update`/`offboard`). So onboarding costs one platform grant, not a ticket per module. The
+`update`/`offboard`). So onboarding costs one platform grant, not a ticket per ruleset. The
 platform team can override any ruleset's grants afterward (manually now; via the API later,
 out of scope).
 
@@ -102,16 +112,32 @@ the subject's MI lives in a scope the creator controls). Rejected — overreache
 plane's remit and adds a directory dependency; the platform team's RBAC grant is the
 authority instead.
 
-*RBAC source:* a separate platform-owned file (a second blob in the same storage account),
-written by the platform team, never by the API's write path. Keeps the trust boundary
-outside the API's writable surface. TOFU-assigned ownership is recorded alongside the
-ruleset; the platform's base grants remain platform-only.
+*RBAC source:* a `grants` section inside the single control-plane state blob, edited by the
+platform team out of band. The API loads it read-only and its read-modify-write splices only
+the one ruleset being written, never `grants` — so "the API cannot widen its own authority" is
+a **code-level** invariant here, not a storage-level one (see *Resolved Decisions*).
+TOFU-assigned ownership is recorded alongside the ruleset; the platform's base grants remain
+platform-only.
 
 ### 3. Blob-as-private-store: the API is the sole writer
 
 The blob stops being a shared bus with many writers and becomes the control plane's
-**private persistence**. The API reads the current allowlist blob, splices in the one
+**private persistence**. The API reads its current ruleset store, splices in the one
 ruleset being written, validates, and writes back. No database.
+
+The control plane's entire internal state is **one blob**, plus the rendered projection:
+
+```
+  egress-config/rulesets.json   ALL control-plane state: rulesets (subjects, content, acl, owner)
+                                + the platform-owned `grants` + `fallback`      ← the private truth
+  egress-config/allowlist.json  the rendered projection the proxy reads — TODAY'S SCHEMA, UNCHANGED
+```
+
+`allowlist.json` and `allowlist/allowlist.schema.json` do **not** change: the proxy's read
+contract is frozen, and the Go proxy needs no code change at all (see *Resolved Decisions*).
+The rulesets store is the authored shape; rendering it is a pure function, and the
+`rulesets.json` write is the linearization point (render+publish follows a successful
+`If-Match` write).
 
 ```
   writers:  { control-plane API identity }          ← sole Storage Blob Data Contributor
@@ -121,7 +147,7 @@ ruleset being written, validates, and writes back. No database.
 
 *Why:* the powerful blob-write role is held by exactly one identity — the control plane —
 instead of being sprayed to every team's pipeline. Pipelines interact only through the API,
-so all policy (RBAC, forced-report, writer≠subject) is unavoidable. Zero new stateful infra;
+so all policy (RBAC, the onboard default, writer≠subject) is unavoidable. Zero new stateful infra;
 the proxy keeps its simple, dependency-free, fail-closed read.
 *Alternative considered:* proxy fetches config *via* the API (truly one accessor). Rejected —
 it puts the control plane on the proxy's runtime path, making egress enforcement depend on
@@ -197,13 +223,13 @@ DELETE /rulesets/{name}       offboard: remove the ruleset, free its subjects (f
 - **`GET`** — any valid token; returns everything (transparency).
 - **`PUT` on an absent name** — *onboard*: requires the `onboard` verb; the body includes
   `subjects`; on success the ruleset is created and the caller is recorded as owner
-  (trust-on-first-use). All hosts are new → forced to `report`.
+  (trust-on-first-use). The ruleset is stored in `report` whatever action it requested.
 - **`PUT` on an existing name** — *update*: requires `update` (or ownership); a full replace
   of `content` (`allowed_hosts` + `action`); `subjects`/`acl` in the body are rejected.
 - **`DELETE`** — *offboard*: requires `offboard` (or ownership); removes the ruleset entry
   and frees its subjects, which fall to the `fallback`/deny block on the next proxy reload —
   decommission is fail-closed by construction.
-- **`:check`** — runs the same validation + forced-report coercion as `PUT`, returns the
+- **`:check`** — runs the same validation + action policy as `PUT`, returns the
   effective result and an `{ added, removed }` diff, and writes nothing.
 
 ## Risks / Trade-offs
@@ -211,9 +237,14 @@ DELETE /rulesets/{name}       offboard: remove the ruleset, free its subjects (f
 - **Single-blob write contention** → bounded resilience retry absorbs different-ruleset
   collisions; per-ruleset blobs named as the escape hatch if the retry budget is regularly
   exhausted under real load.
-- **Forced-report coercion could surprise pipelines** that expect `enforce` immediately →
-  document it; `:check` shows the coerced result before a real push. New hosts must be
-  observed in `report` and promoted (a later, likely portal-driven, step).
+- **Forced `report` at onboard could surprise pipelines** that expect `enforce` immediately →
+  document it; `:check` shows the effective action before a real push. A new ruleset must be
+  observed in `report` and promoted by an explicit `enforce` push.
+- **Nothing coerces a host added to an already-enforcing ruleset** — the audit event and the
+  `:check` diff are the only controls, so a compromised *pipeline* identity can widen a
+  ruleset it legitimately owns. Accepted: the alternative weakens rules already in force.
+  Mitigated by narrow `onboard`/`update` grants, the team's own repo review of its rules file,
+  and alerting on the addition audit events.
 - **The API identity is the sole `Storage Blob Data Contributor`** on the private blob — by
   design it is the chokepoint, but that also makes it the single most valuable identity: a
   compromise of it is a compromise of the whole allowlist. → lock the API's managed identity,
@@ -226,16 +257,19 @@ DELETE /rulesets/{name}       offboard: remove the ruleset, free its subjects (f
   audited so a bad grant is visible.
 - **Unpushed / unmaintained rulesets** (onboarded but never updated) → empty `allowed_hosts`;
   subjects fall to fallback. Fail-closed, acceptable. Surface them in `GET /rulesets`.
-- **Schema evolution module→ruleset** must keep the proxy's read/render path working. →
-  design the rendered ACL output to be unchanged; only the authored schema gains `subjects`
-  (array) and `acl`. Treat as backward-compatible for the proxy.
+- **Introducing the ruleset model** must keep the proxy's read/render path working. → the
+  ruleset model is a *new, separate* store; `allowlist.json` keeps today's schema exactly and
+  is produced by rendering that store, so the proxy is untouched. Cost: the rendered blob is
+  derived state that can lag its source if the second write fails — bounded by re-rendering
+  on the next successful write, and detectable by comparing the two blobs.
 
 ## Migration Plan
 
-1. Evolve `allowlist.schema.json` + `docs/allowlist.md`: `module` → `ruleset`, `appid` →
-   `subjects[]`, add `acl`. Keep the rendered ACL identical so the proxy is untouched.
-2. Add the platform-owned RBAC config source (second blob) with the `onboard`/`update`/
-   `offboard` grants, plus a sample.
+1. Add `allowlist/rulesets.schema.json` (the authored ruleset store: `name`, `subjects[]`,
+   `content`, `acl`, `owner`) and the renderer that projects it onto the **unchanged**
+   `allowlist.json`. `allowlist.schema.json` is not touched; `docs/allowlist.md` gains the
+   ruleset framing and the two topologies.
+2. Add the platform-owned `grants` section to the ruleset store, plus a sample.
 3. Build the API; grant its managed identity `Storage Blob Data Contributor` (sole writer)
    and switch the proxy's identity to `Storage Blob Data Reader`. Grant pipelines no blob
    role.
@@ -255,9 +289,53 @@ DELETE /rulesets/{name}       offboard: remove the ruleset, free its subjects (f
 - **Host-removal on `PUT`** — `PUT` is a **full replace** (desired-state). The mental model:
   a team keeps a rules file per environment in its repo; the pipeline pushes that file, so
   the ruleset always matches the repo and a host absent from the push is removed. To close
-  the one gap this opens — forced-`report` guards *additions* but nothing guards a *removal*
-  — the API SHALL emit an audit event for every host removed by a push, and `:check` SHALL
-  return an `{ added, removed }` diff so pipelines can gate on unexpected removals.
+  the gaps this opens — nothing coerces an *addition* to an enforcing ruleset, and nothing
+  guards a *removal* — the API SHALL emit an audit event for every host added or removed by a
+  push, and `:check` SHALL return an `{ added, removed }` diff so pipelines can gate on
+  unexpected changes before pushing.
+
+- **The allowlist schema is frozen; the ruleset store is a new artifact.** The Go proxy parses
+  the *authored* blob (`modules[]` with `appid`/`subnet`), so renaming keys there would have
+  been a proxy change, not just a rendering change. Instead `allowlist.json` and its schema
+  stay exactly as they are, and the control plane renders them from its own
+  `rulesets.json` store. Rendering: one module entry **per subject** — `id` is the ruleset
+  name for a single-subject ruleset (so today's file renders byte-identically) and
+  `{name}-{n}` for each subject of a multi-subject one; an `appid` subject sets `appid`, a
+  `netid` subject sets `subnet`; `action` is the ruleset's already-coerced action; `fallback`
+  passes through. *Alternatives considered:* teaching the proxy the ruleset schema (rejected —
+  the proxy's read contract is the one thing this change promised not to touch), and a
+  superset blob carrying both shapes (rejected — duplicated `allowed_hosts` in the file teams
+  read).
+
+- **The control plane's internal state is a single blob**, `egress-config/rulesets.json`,
+  holding rulesets *and* the platform-owned `grants` *and* `fallback`. One document = one
+  linearizable state and one `If-Match` write; no cross-blob consistency to reason about.
+  *Trade-off accepted:* the grants now live inside the blob the API can write, so
+  "the API cannot widen its own authority" is enforced in **code** (the RMW splices only the
+  target ruleset and copies `grants` through untouched) rather than by storage permissions.
+  Blob versioning + soft delete remain the backstop, and a grants change is visible in the
+  blob's version history.
+
+- **`report` is the onboarding *default*, not a gate that overrides an explicit request.** Two
+  constraints kill the per-host reading: evaluation inside a ruleset must be uniform (a rendered
+  module has exactly one `action`), and adding a host must never *downgrade* an enforcing
+  ruleset to `report` — that would reduce the security of rules already in force. A new host
+  therefore has nowhere to sit as `report` on its own. What remains is a default: **`onboard`
+  without an explicit action stores `action: report`**, the on-ramp for a workload whose egress
+  is not yet known, and promotion is an explicit later push.
+
+  An explicit `action` is always honoured, including at onboard. This is the direction the
+  security argument actually points: `report` **permits all traffic** and merely logs off-list
+  hosts, so coercing it over a team's explicit `enforce` would hand a brand-new workload *more*
+  egress than it asked for — backwards for a system whose purpose is restricting egress. (This
+  corrected an earlier reading of the requirement, caught in exploratory testing.) The system
+  still never lowers a ruleset's action on its own. What guards widening an *enforcing* ruleset is the audit event
+  per added host plus the `{ added, removed }` diff from `:check`, which a pipeline can gate
+  on — the same control that guards removals. No per-host state exists in the model.
+  *Alternatives considered:* holding new hosts `pending` and unrendered until a second push
+  (adds per-host state, and the gate degrades to a one-deploy delay since CI re-pushes the
+  same file); rejecting any widening push against an enforcing ruleset (forces a
+  report→enforce cycle for a routine change, and that cycle is itself a real weakening).
 
 ## Open Questions
 

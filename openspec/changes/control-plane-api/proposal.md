@@ -13,10 +13,12 @@ deferred.
 
 ## What Changes
 
-- **Introduce the `ruleset` model.** Generalize today's allowlist "module" into a
-  *ruleset*: a `name`, a set of `subjects` (workload identities / netids the ruleset
-  governs), the `content` (`allowed_hosts` + `action`), and an `acl` (`edit` for humans,
-  `push` for machines, `admin` governing the acl itself). A subject belongs to **at most
+- **Introduce the `ruleset` model.** A *ruleset* is the set of rules applied to one or more
+  clients of the proxy, and it replaces "module" as the unit teams author: a `name`, a set of
+  `subjects` (workload identities / netids the ruleset governs), the `content`
+  (`allowed_hosts` + `action`), and an `acl` (`edit` for humans, `push` for machines, `admin`
+  governing the acl itself). "Module" survives only as a key inside the rendered
+  `allowlist.json` — the proxy's wire format, which no one authors by hand under Mode 2. A subject belongs to **at most
   one** ruleset (one-to-one; no composition). The identity that may write a ruleset is
   **never** the workload identity it governs (writer ≠ subject).
 - **Frame four operating modes**, of which only Mode 2 is built here:
@@ -35,15 +37,19 @@ deferred.
 - **Self-provisioning (onboarding)**: a service connection holding `onboard` can create a
   new ruleset on first push, declaring its `subjects`. **Trust-on-first-use** — the creator
   is recorded as the ruleset's owner (gains `update`/`offboard`), so onboarding needs one
-  platform grant, not a platform ticket per module. The platform team can override any
+  platform grant, not a platform ticket per ruleset. The platform team can override any
   ruleset's grants afterward.
 - **Subjects are write-once at onboard, frozen for update**: `onboard` sets `subjects`;
   `update` may write **`allowed_hosts` and `action` only**. This preserves the anti-hijack
   property in steady state. Uniqueness (first-come) protects already-onboarded subjects;
   the platform's scoping of who gets `onboard` bounds squatting on un-onboarded ones.
-- **Forced `report` on new hosts**: a newly added host is coerced to `action: report`;
-  new endpoints cannot go straight to `enforce`. A freshly onboarded ruleset is therefore
-  born entirely in `report` — the documented onboarding on-ramp.
+- **`report` is the onboarding default, never an override**: evaluation within a ruleset is
+  uniform (one `action`), and the system never lowers a ruleset's action on its own. A ruleset
+  onboarded *without* an explicit action starts in `report` — the documented on-ramp for a
+  workload whose egress is not yet known — but an explicit `enforce` is honoured, at onboard and
+  after. (`report` permits all traffic and merely logs it, so overriding an explicit `enforce`
+  would hand a new workload more egress than it asked for.) Widening an enforcing ruleset is
+  controlled by the per-host audit events and the `:check` `{ added, removed }` diff.
 - **The blob becomes the control plane's private store.** The **only writer** is the
   control plane API's own identity; **no pipeline ever gets a blob role** — pipelines reach
   the config only through the API. The proxy keeps a **read-only** direct blob poll. The
@@ -63,9 +69,9 @@ deferred.
 
 - `ruleset-model`: The ruleset data model and its invariants — schema (name, subjects,
   content, acl), one-to-one subject↔ruleset uniqueness, writer≠subject, the
-  platform-owned registry vs. writable content split, and the forced-`report`-on-new-host
-  policy. Supersedes the current allowlist "module" schema while keeping the proxy's read
-  contract intact.
+  platform-owned registry vs. writable content split, and the `report`-by-default-at-onboard
+  policy. Replaces "module" as the authored unit; the proxy's read contract is untouched,
+  because rulesets are *rendered* into it rather than replacing it.
 - `control-plane-api`: The HTTP API surface for Mode 2 — endpoints, authN via JWT/JWKS,
   platform-managed RBAC authZ (`onboard`/`update`/`offboard` verbs) with trust-on-first-use
   ownership, the blob-as-private-store read-modify-write, and ETag optimistic concurrency
@@ -80,14 +86,16 @@ deferred.
 - **New code**: an ASP.NET Core control-plane API (alongside the existing `src/SampleApp`
   and `src/EgressProxy.Client`), likely deployed on Azure Container Apps like the sample
   workload. Reuses existing JWKS/JWT validation and managed-identity blob access.
-- **Allowlist schema**: `allowlist/allowlist.schema.json` and `docs/allowlist.md` evolve
-  from "module" to "ruleset" (subjects as an array, ruleset acl). Backward-compatible read
-  path for the proxy is a design constraint.
+- **Allowlist schema**: unchanged. `allowlist/allowlist.schema.json` and `allowlist.json`
+  stay exactly as they are — they are the proxy's read contract. The ruleset model lives in a
+  **new** store (`allowlist/rulesets.schema.json`, blob `egress-config/rulesets.json`) that
+  the control plane renders into the allowlist document, so the Go proxy needs no code change.
+  `docs/allowlist.md` gains the ruleset/topology framing.
 - **Infra / access model**: new Container App + its managed identity. That identity is the
   **sole** holder of `Storage Blob Data Contributor` on the (now private) allowlist blob;
   the proxy's identity gets `Storage Blob Data Reader`; **no pipeline gets any blob role**.
-  A platform-owned RBAC config source (a separate file/blob) holds the `onboard`/`update`/
-  `offboard` grants and is loaded read-only by the API.
+  A platform-owned `grants` section of the control-plane state blob holds the
+  `onboard`/`update`/`offboard` grants and is loaded read-only by the API.
 - **Dependencies**: `Microsoft.Extensions.Resilience` (Polly v8) added to the API project.
 - **Docs**: a new `docs/control-plane.md` (model, RBAC, API, `curl` examples) plus README /
   `docs/allowlist.md` updates covering the two topologies — **without** the control plane

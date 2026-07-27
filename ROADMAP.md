@@ -17,9 +17,11 @@ Well-scoped items have been forked into GitHub issues:
 
 Larger or underspecified items, kept here until they're ready to become issues:
 
-- **Control-plane API + management portal** — a thin validating API in front of the
-  allowlist (per-team self-service: add FQDNs to your own module only, forced `report`
-  on new endpoints), replacing direct blob writes.
+- **Management portal** — the human half of the control plane (Mode 3): edit rulesets in an
+  app with per-ruleset RBAC, and administer the platform grants through the API rather than
+  by hand. The validating **control-plane API** underneath it has shipped — per-team pipeline
+  self-service, forced `report` at onboard, blob writes only through the API. See
+  [docs/control-plane.md](docs/control-plane.md).
 - **Per-module allowlist blobs** — one blob per team/module with path-scoped RBAC,
   enabling write isolation without ABAC; the renderer stays the trust boundary.
 - **Allow mixing different types of proxies and proxy auth per module.**

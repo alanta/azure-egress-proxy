@@ -34,16 +34,16 @@ content), `POST /rulesets/{name}:check` (dry-run validate), and `DELETE /ruleset
 
 ### Requirement: Dry-run validation
 
-The `POST /rulesets/{name}:check` endpoint SHALL run the same schema validation and
-forced-report coercion as `PUT`, return the effective result and an `{ added, removed }`
-diff against current content, and make NO change to the allowlist blob.
+The `POST /rulesets/{name}:check` endpoint SHALL run the same schema validation and action
+policy as `PUT`, return the effective result and an `{ added, removed }` diff against current
+content, and make NO change to the store or the allowlist blob.
 
-#### Scenario: Check reports coerced result without writing
+#### Scenario: Check reports the effective action without writing
 
-- **WHEN** a caller sends `POST /rulesets/{name}:check` with a proposed content that adds a
-  new host
-- **THEN** the API returns the validated, coerced result (new host in `report`) and makes
-  no change to the allowlist blob
+- **WHEN** a caller sends `POST /rulesets/{name}:check` for a ruleset that does not yet exist,
+  without specifying an `action`
+- **THEN** the API returns the effective result showing `action: report` (the onboarding
+  default) and makes no change to the store or the allowlist blob
 
 #### Scenario: Check reports the removal diff
 
@@ -107,7 +107,8 @@ SHALL NOT change `subjects` or `acl`.
 - **WHEN** a caller with `onboard` sends `PUT /rulesets/{new-name}` with `subjects` and
   content
 - **THEN** the ruleset is created, the caller is recorded as owner (gaining `update`/
-  `offboard`), and all hosts are applied in `report` (forced-report on new hosts)
+  `offboard`), and the ruleset is stored with the action it requested, defaulting to `report`
+  when none was given
 
 #### Scenario: Onboard without the verb is denied
 
@@ -116,8 +117,11 @@ SHALL NOT change `subjects` or `acl`.
 
 #### Scenario: Update cannot change subjects
 
-- **WHEN** a caller sends `PUT` to an existing ruleset with a `subjects` field
-- **THEN** the API SHALL reject the change to `subjects` (content-only update)
+- **WHEN** a caller sends `PUT` to an existing ruleset with a `subjects` field that differs
+  from the stored subjects
+- **THEN** the API SHALL reject the request (content-only update). A `subjects` field that
+  merely restates the stored subjects is accepted unchanged, so a desired-state pipeline can
+  keep pushing one file.
 
 ### Requirement: Blob is the control plane's private store
 

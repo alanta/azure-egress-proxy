@@ -1,0 +1,357 @@
+# Exploratory testing for the control-plane API.
+#
+# Prefer a UI? The same surface is browsable at http://localhost:5199/scalar (Development only)
+# — paste a token from §0 into its auth box. This file stays the scriptable version.
+#
+# Format: VS Code "REST Client" (humao.rest-client) / JetBrains HTTP Client. Send a request by
+# clicking "Send Request" above it. Run them roughly top to bottom the first time — the write
+# examples build on each other (onboard -> check -> promote -> offboard).
+#
+# Prerequisites:
+#   dotnet run --project src/AppHost/AppHost.csproj
+# Both ports below are pinned in AppHost.cs, so this file works against a fresh run as-is. If
+# you have an older stack up, restart it — a run that predates the control plane has nothing
+# listening on 5199.
+#
+# See docs/control-plane.md for what each rule is protecting.
+
+@api = http://localhost:5199
+@idp = http://localhost:18080
+
+# --- Identities -------------------------------------------------------------------------------
+# Seeded in allowlist/rulesets.json. The mock IdP mints a token for ANY appid you ask for; that
+# is a local-only shortcut standing in for the platform guarantee in Azure, and it is exactly
+# what makes the negative cases below testable.
+
+@pipelineId = 22222222-2222-2222-2222-222222222222
+# registry-wide onboard; update/offboard scoped to the sample-app ruleset
+@platformId = 99999999-9999-9999-9999-999999999999
+# unscoped: every verb on every ruleset
+@workloadId = 11111111-1111-1111-1111-111111111111
+# a GOVERNED subject (sample-app) — must never be able to write
+@strangerId = 44444444-4444-4444-4444-444444444444
+# holds no grant at all
+@subjectId  = 33333333-3333-3333-3333-333333333333
+# the workload the "payments" ruleset below will govern
+
+### 0a. Get a token for the pipeline identity. Re-send when it expires (TTL is 5 minutes).
+# @name pipelineToken
+GET {{idp}}/token?appid={{pipelineId}}
+
+### 0b. Tokens for the other identities, used by the negative cases further down.
+# @name platformToken
+GET {{idp}}/token?appid={{platformId}}
+
+###
+# @name workloadToken
+GET {{idp}}/token?appid={{workloadId}}
+
+###
+# @name strangerToken
+GET {{idp}}/token?appid={{strangerId}}
+
+# If your client does not resolve these request variables, paste a token in by hand:
+#   @pipeline = eyJhbGciOi...
+@pipeline = {{pipelineToken.response.body.*}}
+@platform = {{platformToken.response.body.*}}
+@workload = {{workloadToken.response.body.*}}
+@stranger = {{strangerToken.response.body.*}}
+
+
+# ==============================================================================================
+# Authentication — the token is validated exactly as the proxy validates workload tokens
+# ==============================================================================================
+
+### 1a. No token at all -> 401
+GET {{api}}/rulesets
+
+### 1b. A token that is not a JWT -> 401
+GET {{api}}/rulesets
+Authorization: Bearer not-a-jwt
+
+### 1c. A well-formed token from the wrong issuer -> 401 (signature/issuer mismatch)
+GET {{api}}/rulesets
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcHBpZCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsImlzcyI6Imh0dHBzOi8vZXZpbC5leGFtcGxlLyIsImF1ZCI6ImVncmVzcy1wcm94eSIsImV4cCI6NDEwMjQ0NDgwMH0.Ck7g0DYP_dQnQ4dTQmgVXeQdlqB6MyDgVOTn2mUZ0Yc
+
+### 1d. Liveness (only mapped in Development, which is how Aspire runs it)
+GET {{api}}/health
+
+
+# ==============================================================================================
+# Reads are open — any valid token sees the whole egress posture, whatever it may write
+# ==============================================================================================
+
+### 2a. List every ruleset, as an identity holding NO grants
+GET {{api}}/rulesets
+Authorization: Bearer {{stranger}}
+
+### 2b. Read one ruleset
+GET {{api}}/rulesets/sample-app
+Authorization: Bearer {{stranger}}
+
+### 2c. Unknown ruleset -> 404
+GET {{api}}/rulesets/does-not-exist
+Authorization: Bearer {{stranger}}
+
+
+# ==============================================================================================
+# The loop: onboard -> check -> promote -> offboard
+# ==============================================================================================
+
+### 3. Onboard "payments" WITHOUT an action.
+# -> 201 with "action":"report" — the on-ramp default for a workload whose egress you do not
+#    yet know. Also note "owner": the caller is recorded trust-on-first-use and now holds
+#    update/offboard on it without any platform grant.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{subjectId}}" }],
+  "content": {
+    "allowed_hosts": ["api.stripe.com"]
+  }
+}
+
+### 3b. ...and an explicit action IS honoured at onboard. report is a default, not an override:
+# it passes all traffic and only logs, so forcing it over an explicit enforce would grant a new
+# workload more egress than it asked for. (Offboard payments first to re-run this from scratch.)
+PUT {{api}}/rulesets/payments-strict
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }],
+  "content": {
+    "allowed_hosts": ["api.stripe.com"],
+    "action": "enforce"
+  }
+}
+
+### 4. Dry-run the next push. Returns the {added, removed} diff and writes NOTHING —
+# this is what a pipeline gates on before pushing.
+POST {{api}}/rulesets/payments:check
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": {
+    "allowed_hosts": ["api.stripe.com", "api.vendor.com"],
+    "action": "enforce"
+  }
+}
+
+### 5. Confirm the dry run really wrote nothing (still one host, still report)
+GET {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+
+### 6. Promote to enforce, once the report-mode logs are clean. Authorized by ownership.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": {
+    "allowed_hosts": ["api.stripe.com"],
+    "action": "enforce"
+  }
+}
+
+### 7. Widen an ALREADY ENFORCING ruleset.
+# -> stays "enforce": adding a host never downgrades rules already in force. The addition is
+#    audited instead — look for `host ... ADDED to ruleset payments by ...` in the API log.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": {
+    "allowed_hosts": ["api.stripe.com", "api.vendor.com"],
+    "action": "enforce"
+  }
+}
+
+### 8. Full replace removes what the push omits -> "removed":["api.vendor.com"], audited.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": {
+    "allowed_hosts": ["api.stripe.com"],
+    "action": "enforce"
+  }
+}
+
+### 9. A desired-state pipeline may restate the stored subjects unchanged (no-op, not an error)
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{subjectId}}" }],
+  "content": {
+    "allowed_hosts": ["api.stripe.com"],
+    "action": "enforce"
+  }
+}
+
+
+# ==============================================================================================
+# The rules worth poking at — every one of these should be refused
+# ==============================================================================================
+
+### 10. Writer != subject: a GOVERNED workload tries to widen its own ruleset -> 403.
+# This is the attack the proxy exists to stop. It fails even though this identity holds
+# grants — being a subject disqualifies it outright.
+PUT {{api}}/rulesets/sample-app
+Authorization: Bearer {{workload}}
+Content-Type: application/json
+
+{
+  "content": {
+    "allowed_hosts": ["api.github.com", "exfil.example.com"],
+    "action": "enforce"
+  }
+}
+
+### 11. No grant, no write -> 403
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{stranger}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["evil.example.com"], "action": "enforce" }
+}
+
+### 12. Onboard without the verb -> 403, and nothing is created
+PUT {{api}}/rulesets/squatted
+Authorization: Bearer {{stranger}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "77777777-7777-7777-7777-777777777777" }],
+  "content": { "allowed_hosts": ["evil.example.com"] }
+}
+
+### 13. Subjects are frozen after onboard -> 400.
+# Steady-state identity hijack is impossible: an update can never move a different workload
+# under these rules.
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "66666666-6666-6666-6666-666666666666" }],
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+### 14. One subject, one ruleset -> 409. First-come protects an onboarded subject from
+# being claimed by someone else's ruleset.
+PUT {{api}}/rulesets/payments-copy
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "{{subjectId}}" }],
+  "content": { "allowed_hosts": ["api.stripe.com"] }
+}
+
+### 15. allowed_hosts holds exact FQDNs — no URLs -> 400
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["https://api.stripe.com"], "action": "enforce" }
+}
+
+### 16. ...no wildcards -> 400
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["*.stripe.com"], "action": "enforce" }
+}
+
+### 17. ...and no bare IPs -> 400
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["10.0.0.1"], "action": "enforce" }
+}
+
+### 18. Unknown action -> 400
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "allow-everything" }
+}
+
+### 19. Ruleset names are lowercase slugs -> 400
+PUT {{api}}/rulesets/Payments_v2
+Authorization: Bearer {{pipeline}}
+Content-Type: application/json
+
+{
+  "subjects": [{ "appid": "88888888-8888-8888-8888-888888888888" }],
+  "content": { "allowed_hosts": ["api.stripe.com"] }
+}
+
+
+# ==============================================================================================
+# Multi-subject rulesets and the platform identity
+# ==============================================================================================
+
+### 20. A ruleset governs one or more clients. This one takes an appid AND a source CIDR;
+# it renders to one allowlist entry per subject, both carrying the same content.
+PUT {{api}}/rulesets/billing
+Authorization: Bearer {{platform}}
+Content-Type: application/json
+
+{
+  "subjects": [
+    { "appid": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    { "netid": "10.2.0.0/23" }
+  ],
+  "content": {
+    "allowed_hosts": ["api.billing.example.com"],
+    "action": "enforce"
+  }
+}
+
+### 21. The unscoped platform grant may write any ruleset, including one it does not own
+PUT {{api}}/rulesets/payments
+Authorization: Bearer {{platform}}
+Content-Type: application/json
+
+{
+  "content": { "allowed_hosts": ["api.stripe.com"], "action": "enforce" }
+}
+
+
+# ==============================================================================================
+# Offboard
+# ==============================================================================================
+
+### 22. Offboard -> the subjects are freed and fall to the fallback/deny block on the next
+# proxy reload. Decommission is fail-closed by construction.
+DELETE {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+
+### 23. Offboarding it again -> 404
+DELETE {{api}}/rulesets/payments
+Authorization: Bearer {{pipeline}}
+
+### 24. Clean up the multi-subject ruleset too
+DELETE {{api}}/rulesets/billing
+Authorization: Bearer {{platform}}
+
+### 25. Final state — back to just the seeded sample-app ruleset
+GET {{api}}/rulesets
+Authorization: Bearer {{platform}}

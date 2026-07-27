@@ -340,6 +340,49 @@ az storage blob upload \
   --overwrite \
   --only-show-errors >/dev/null
 
+control_plane_url="$(python3 - "$deployment_output_json" <<'PY'
+import json,sys
+doc=json.loads(sys.argv[1])
+print(doc.get("controlPlaneUrl",{}).get("value",""))
+PY
+)"
+
+# Mode 2 only: seed the control plane's own state blob. The allowlist blob uploaded above is then
+# a rendered projection the control plane overwrites on its first push, so seeding both keeps the
+# proxy serving correct rules from the moment it starts.
+if [ -n "$control_plane_url" ]; then
+  rulesets_blob="$(python3 - "$deployment_output_json" <<'PY'
+import json,sys
+doc=json.loads(sys.argv[1])
+print(doc["rulesetsBlobName"]["value"])
+PY
+)"
+  rulesets_file="${RULESETS_FILE:-$repo_root/allowlist/rulesets.json}"
+
+  step "Patching rulesets with sample-app client id ($sample_client_id)"
+  python3 - "$rulesets_file" "$sample_client_id" <<'PY'
+import json,sys
+path,appid=sys.argv[1],sys.argv[2]
+doc=json.load(open(path,encoding="utf-8"))
+for ruleset in doc.get("rulesets",[]):
+    if ruleset.get("name")=="sample-app":
+        ruleset["subjects"]=[{"appid":appid}]
+json.dump(doc,open(path,"w",encoding="utf-8"),indent=2)
+open(path,"a",encoding="utf-8").write("\n")
+PY
+
+  step "Uploading control-plane state to $allowlist_account/$allowlist_container/$rulesets_blob"
+  az storage blob upload \
+    --account-name "$allowlist_account" \
+    --container-name "$allowlist_container" \
+    --name "$rulesets_blob" \
+    --file "$rulesets_file" \
+    --auth-mode login \
+    --overwrite \
+    --only-show-errors >/dev/null
+fi
+
 log "Deployment complete"
 echo "Sample app URL: $app_url"
+[ -n "$control_plane_url" ] && echo "Control plane URL: $control_plane_url"
 echo "Demo command: scripts/demo.sh \"$app_url\""

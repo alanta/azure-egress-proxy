@@ -5,9 +5,10 @@
 The system SHALL model each unit of egress policy as a **ruleset** consisting of a unique
 `name`, a set of `subjects` (each a workload identity `appid` or a `netid`), `content`
 (`allowed_hosts` and an `action` of `enforce`, `report`, or `open`), and an `acl`
-(`edit` for humans, `push` for machines, `admin` governing the acl). The ruleset SHALL
-render to the proxy's existing ACL format unchanged, so the proxy read/reload contract is
-not affected.
+(`edit` for humans, `push` for machines, `admin` governing the acl). Rulesets SHALL live in
+their own store, and the system SHALL render that store to the **existing, unchanged**
+allowlist document the proxy already consumes — one module entry per subject — so the proxy's
+read/reload contract and its code are not affected.
 
 #### Scenario: Ruleset governs its subjects
 
@@ -75,21 +76,39 @@ on that ruleset.
 - **THEN** that caller is recorded as the ruleset's owner and may subsequently `update` and
   `offboard` it
 
-### Requirement: Forced report on new hosts
+### Requirement: Report is the onboarding default
 
-The system SHALL coerce any host that is newly added to a ruleset's `allowed_hosts` to be
-treated under `action: report`, so a new endpoint cannot be pushed straight into `enforce`.
-Hosts already present in the ruleset retain their existing action.
+Evaluation within a ruleset SHALL be uniform — a ruleset has exactly one effective `action`,
+and its hosts are never evaluated under differing actions. A ruleset created by `onboard`
+**without an explicit action** SHALL be stored with `action: report`, so a workload whose
+egress is not yet understood is observed rather than broken.
 
-#### Scenario: New host is forced to report
+`report` SHALL be a default, never an override. An explicitly requested `action` SHALL always
+be honoured, at onboard and afterwards: `report` permits all traffic and only logs it, so
+coercing it over an explicit `enforce` would grant a new workload *more* egress than it asked
+for. The system SHALL never lower a ruleset's action on its own — in particular, adding a host
+to an enforcing ruleset SHALL NOT weaken it. Host additions and removals SHALL be audited and
+surfaced in the `:check` diff, which is the control on widening an enforcing ruleset.
 
-- **WHEN** a push adds a host not previously present in the ruleset
-- **THEN** that host is applied in `report` mode regardless of the requested `action`
+#### Scenario: Onboard without an action starts in report
 
-#### Scenario: Existing host retains its action
+- **WHEN** a caller onboards a ruleset without specifying an `action`
+- **THEN** the ruleset is stored and rendered with `action: report`
 
-- **WHEN** a push includes a host already present in the ruleset under `enforce`
-- **THEN** that host remains in `enforce`
+#### Scenario: An explicit action at onboard is honoured
+
+- **WHEN** a caller onboards a ruleset requesting `action: enforce`
+- **THEN** the ruleset is stored and rendered with `action: enforce`
+
+#### Scenario: Promotion is an explicit push
+
+- **WHEN** the owning caller later pushes the tuned host set with `action: enforce`
+- **THEN** the ruleset's effective action becomes `enforce`
+
+#### Scenario: Adding a host never weakens an enforcing ruleset
+
+- **WHEN** a push adds a host to a ruleset currently in `enforce` and requests `enforce`
+- **THEN** the ruleset stays in `enforce` with the host added, and the addition is audited
 
 ### Requirement: Fail-closed decommission
 
