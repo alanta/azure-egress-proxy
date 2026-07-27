@@ -39,6 +39,14 @@ public sealed class RulesetService(
 {
     public const string RmwPipeline = "state-rmw";
 
+    /// <summary>
+    /// Publishing the rendered document is a second write, so it can fail on its own after the
+    /// state write has already committed. It gets its own bounded retry because that failure is
+    /// almost always transient — and because the alternative, a silently stale proxy, is the one
+    /// outcome this system must not produce quietly.
+    /// </summary>
+    public const string PublishPipeline = "allowlist-publish";
+
     public async Task<StateDocument> ReadStateAsync(CancellationToken cancellationToken) =>
         (await store.ReadAsync(cancellationToken)).State;
 
@@ -176,7 +184,7 @@ public sealed class RulesetService(
                 "'subjects' is set at onboard and frozen afterwards; an update writes allowed_hosts and action only");
         }
 
-        if (request.Acl is { } acl && acl != existing.Acl)
+        if (request.Acl is { } acl && !SameAcl(acl, existing.Acl))
         {
             return new PolicyError(HttpStatusCode.BadRequest,
                 "'acl' is set at onboard and frozen afterwards; an update writes allowed_hosts and action only");
@@ -184,6 +192,24 @@ public sealed class RulesetService(
 
         return null;
     }
+
+    /// <summary>
+    /// Compares acls by value. Record equality would compare the underlying lists by reference, so
+    /// a pipeline restating the acl it just read — different list instances, identical content —
+    /// would be refused as a change. Order is not significant: these are identity sets.
+    /// </summary>
+    private static bool SameAcl(Acl? left, Acl? right)
+    {
+        left ??= new Acl();
+        right ??= new Acl();
+
+        return SameIdentities(left.Edit, right.Edit)
+            && SameIdentities(left.Push, right.Push)
+            && SameIdentities(left.Admin, right.Admin);
+    }
+
+    private static bool SameIdentities(List<string> left, List<string> right) =>
+        left.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(right);
 
     private async Task<WriteOutcome> ExecuteAsync(
         Func<StateDocument, (WriteOutcome Outcome, StateDocument? Next)> transform,
@@ -209,7 +235,33 @@ public sealed class RulesetService(
                 }
 
                 await store.WriteAsync(next, snapshot.ETag, token);
-                await store.PublishAllowlistAsync(AllowlistRenderer.Render(next), token);
+
+                // The state write above is the linearization point: past it the mutation is
+                // durable whatever happens next, so a publish failure cannot be reported as if
+                // nothing had been written.
+                try
+                {
+                    await pipelines.GetPipeline(PublishPipeline).ExecuteAsync(
+                        async publishToken => await store.PublishAllowlistAsync(
+                            AllowlistRenderer.Render(next), publishToken),
+                        token);
+                }
+                catch (Exception e)
+                {
+                    audit.PublishFailed(caller, outcome, e);
+                    logger.LogError(e,
+                        "ruleset {Ruleset} was committed but the rendered allowlist could not be published; "
+                        + "the proxy keeps serving the previous configuration until a later write republishes it",
+                        outcome.Ruleset?.Name);
+
+                    return outcome with
+                    {
+                        Error = new PolicyError(HttpStatusCode.ServiceUnavailable,
+                            $"ruleset '{outcome.Ruleset?.Name}' was saved, but publishing it to the proxy failed. "
+                            + "The proxy is still serving the previous configuration. Retry this request: it is a "
+                            + "full replace, so repeating it is safe and will republish."),
+                    };
+                }
 
                 audit.Written(caller, outcome.Created ? Verbs.Onboard : verb, outcome);
                 return outcome;

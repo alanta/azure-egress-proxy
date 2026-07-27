@@ -182,7 +182,8 @@ for rollback.
 
 Status codes: `401` no/invalid token · `403` missing verb, or the caller is a governed subject ·
 `400` invalid host, or an attempt to change frozen fields · `404` unknown ruleset ·
-`409` subject already claimed by another ruleset, or sustained write contention.
+`409` subject already claimed by another ruleset, or sustained write contention ·
+`503` saved, but publishing to the proxy failed (see *Failure modes*).
 
 - **AuthN** reuses the proxy's RS256/JWKS token validation (`iss`/`aud`/`exp`) — one identity
   model across data plane and control plane.
@@ -279,6 +280,35 @@ identity keeps `Storage Blob Data Contributor`, and
 | `RULESETS_BLOB` | Control-plane state (default `rulesets.json`) |
 | `ALLOWLIST_BLOB` | Rendered projection the proxy reads (default `allowlist.json`) |
 | `JWKS_URL`, `EXPECT_ISS`, `EXPECT_AUD` | Caller token validation — the same values the proxy uses |
+
+**Outside Development the API refuses to start** unless `EXPECT_ISS` and `EXPECT_AUD` are set and
+`JWKS_URL` is `https`. An unset issuer or audience would otherwise silently disable that check and
+accept tokens minted for any tenant or any resource; failing at startup, with the reason, beats
+discovering it from an audit log later.
+
+### Failure modes
+
+- **`409` on a write** — sustained contention on the same ruleset. Retry: `PUT` is a full replace,
+  so repeating it is safe.
+- **`503` on a write** — the ruleset was **saved**, but rendering it into `allowlist.json` failed
+  after the state write had already committed. The proxy keeps serving its previous configuration
+  (fail-static, not fail-open), and the next successful write to any ruleset republishes. Retrying
+  the same request is the direct fix. This is the one case where control-plane state and the proxy's
+  view are knowingly out of step, so it is logged at error level as
+  `ruleset {name} COMMITTED BUT NOT PUBLISHED` — worth an alert.
+- **Token rejected** — every rejection is logged with a stable reason code (`expired`,
+  `issuer_mismatch`, `audience_mismatch`, `invalid_signature`, `unknown_signing_key`,
+  `unsupported_algorithm`, `malformed`, …) plus method, path and caller IP, so a rotation incident
+  is distinguishable from someone probing.
+
+### Signing-key rotation
+
+The API caches the JWKS through a `ConfigurationManager`, which refreshes on its own schedule and
+on encountering an unknown `kid`. Every fetch logs the key count and the key ids in play, so
+"which keys did it have at 14:05?" is answerable. If callers start failing with
+`unknown_signing_key` after a signer rotation, that log line is the first thing to check: the
+control plane and the proxy resolve keys from the same `JWKS_URL`, so a rotation that breaks one
+breaks the other, and both recover on the next refresh without a restart.
 
 ## Local development
 

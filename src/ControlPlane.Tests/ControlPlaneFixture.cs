@@ -65,16 +65,52 @@ public sealed class ControlPlaneFixture : IAsyncLifetime
     }
 
     public string Token(string appid, TimeSpan? lifetime = null) =>
+        Token(claims: new Dictionary<string, object> { ["appid"] = appid, ["sub"] = appid }, lifetime: lifetime);
+
+    /// <summary>
+    /// Full control over the token, so the negative cases can vary one thing at a time: the
+    /// identity claim, the issuer, the audience, the lifetime, or the signing key and algorithm.
+    /// </summary>
+    public string Token(
+        IDictionary<string, object> claims,
+        TimeSpan? lifetime = null,
+        string? issuer = null,
+        string? audience = null,
+        SigningCredentials? signingCredentials = null,
+        TimeSpan? issuedAgo = null) =>
         new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
         {
-            Issuer = Issuer,
-            Audience = Audience,
+            Issuer = issuer ?? Issuer,
+            Audience = audience ?? Audience,
+            // nbf/iat default to "now", which would sit AFTER a deliberately past expiry and make
+            // the token invalid for the wrong reason. Tests exercising expiry set this explicitly.
+            NotBefore = DateTime.UtcNow.Subtract(issuedAgo ?? TimeSpan.Zero),
+            IssuedAt = DateTime.UtcNow.Subtract(issuedAgo ?? TimeSpan.Zero),
             Expires = DateTime.UtcNow.Add(lifetime ?? TimeSpan.FromMinutes(5)),
-            Claims = new Dictionary<string, object> { ["appid"] = appid, ["sub"] = appid },
-            SigningCredentials = new SigningCredentials(
+            Claims = claims,
+            SigningCredentials = signingCredentials ?? new SigningCredentials(
                 new RsaSecurityKey(_rsa) { KeyId = KeyId },
                 SecurityAlgorithms.RsaSha256),
         });
+
+    /// <summary>A token signed by a key the JWKS does not publish — the forged-token case.</summary>
+    public string TokenSignedByAnotherKey(string appid)
+    {
+        using var attacker = RSA.Create(2048);
+        return Token(
+            new Dictionary<string, object> { ["appid"] = appid },
+            signingCredentials: new SigningCredentials(
+                new RsaSecurityKey(attacker.ExportParameters(true)) { KeyId = KeyId },
+                SecurityAlgorithms.RsaSha256));
+    }
+
+    /// <summary>An HMAC-signed token: the algorithm-substitution case the RS256 pin exists for.</summary>
+    public string TokenSignedWithHmac(string appid) =>
+        Token(
+            new Dictionary<string, object> { ["appid"] = appid },
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey("a-shared-secret-long-enough-for-hmac-sha256"u8.ToArray()),
+                SecurityAlgorithms.HmacSha256));
 
     private async Task<WebApplication> StartJwksServerAsync()
     {

@@ -23,7 +23,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer(new BearerSecuritySchemeTransformer()));
 
 // Same env names the proxy uses, so one deployment configures both sides identically.
-builder.Services.AddControlPlaneJwtAuth(builder.Configuration);
+builder.Services.AddControlPlaneJwtAuth(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton(new BlobStoreOptions
 {
     ConnectionString = builder.Configuration["ALLOWLIST_BLOB_CONNECTION_STRING"],
@@ -46,6 +46,18 @@ builder.Services.AddResiliencePipeline(RulesetService.RmwPipeline, pipeline => p
         MaxRetryAttempts = 5,
         BackoffType = DelayBackoffType.Exponential,
         Delay = TimeSpan.FromMilliseconds(50),
+        UseJitter = true,
+    }));
+
+// Publishing the rendered document happens after the state write has already committed, so a
+// transient failure here leaves the proxy stale. Retry it before giving up and telling the caller.
+builder.Services.AddResiliencePipeline(RulesetService.PublishPipeline, pipeline => pipeline
+    .AddRetry(new RetryStrategyOptions
+    {
+        ShouldHandle = new PredicateBuilder().Handle<Exception>(),
+        MaxRetryAttempts = 3,
+        BackoffType = DelayBackoffType.Exponential,
+        Delay = TimeSpan.FromMilliseconds(100),
         UseJitter = true,
     }));
 

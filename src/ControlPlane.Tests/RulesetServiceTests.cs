@@ -373,6 +373,14 @@ public class RulesetServiceTests
         var store = new InMemoryStateBlobStore(seed) { BeforeWrite = beforeWrite };
 
         var services = new ServiceCollection();
+        services.AddResiliencePipeline(RulesetService.PublishPipeline, pipeline => pipeline
+            .AddRetry(new RetryStrategyOptions
+            {
+                ShouldHandle = new PredicateBuilder().Handle<Exception>(),
+                MaxRetryAttempts = 2,
+                BackoffType = DelayBackoffType.Constant,
+                Delay = TimeSpan.Zero,
+            }));
         services.AddResiliencePipeline(RulesetService.RmwPipeline, pipeline => pipeline
             .AddRetry(new RetryStrategyOptions
             {

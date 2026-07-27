@@ -127,13 +127,29 @@ public static partial class RulesetPolicy
                 return new PolicyError(HttpStatusCode.BadRequest, $"subject appid '{subject.Appid}' is not a GUID");
             }
 
-            if (hasNetid && !NetidRegex.IsMatch(subject.Netid!))
+            if (hasNetid && !IsIPv4Cidr(subject.Netid!))
             {
                 return new PolicyError(HttpStatusCode.BadRequest, $"subject netid '{subject.Netid}' is not a CIDR");
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The shape regex alone would accept 999.999.999.999/24, which the proxy's net.ParseCIDR then
+    /// rejects — silently dropping the subnet mapping, so the ruleset would exist in the control
+    /// plane and govern nothing. Parsing the octets here keeps the two ends agreeing.
+    /// </summary>
+    private static bool IsIPv4Cidr(string netid)
+    {
+        if (!NetidRegex.IsMatch(netid))
+        {
+            return false;
+        }
+
+        var slash = netid.IndexOf('/');
+        return netid[..slash].Split('.').All(octet => byte.TryParse(octet, out _));
     }
 
     public static PolicyError? ValidateContent(RulesetContent content)

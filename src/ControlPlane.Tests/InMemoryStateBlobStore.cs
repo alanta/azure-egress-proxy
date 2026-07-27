@@ -32,11 +32,17 @@ public sealed class InMemoryStateBlobStore(StateDocument? initial = null) : ISta
             Writes = 0;
             PublishedCount = 0;
             BeforeWrite = null;
+            FailPublish = null;
         }
     }
 
     /// <summary>Runs before each write, letting a test inject a competing writer to force a 412.</summary>
     public Action? BeforeWrite { get; set; }
+
+    /// <summary>Called before each publication; return an exception to fail that attempt, or null
+    /// to let it through. Simulates a transient storage fault on the second write — the window in
+    /// which state is committed but the proxy's document is not.</summary>
+    public Func<Exception?>? FailPublish { get; set; }
 
     public StateDocument Current
     {
@@ -88,6 +94,11 @@ public sealed class InMemoryStateBlobStore(StateDocument? initial = null) : ISta
 
     public Task PublishAllowlistAsync(AllowlistDocument allowlist, CancellationToken cancellationToken)
     {
+        if (FailPublish?.Invoke() is { } failure)
+        {
+            throw failure;
+        }
+
         lock (_gate)
         {
             PublishedAllowlist = allowlist;
