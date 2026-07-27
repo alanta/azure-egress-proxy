@@ -50,10 +50,15 @@ dominated by the poll interval — measured at ~5 s with a 5 s poll.
 
 ## Write path
 
-The blob is written data-plane (`az storage blob upload --overwrite --auth-mode login`);
-writers hold **Storage Blob Data Contributor**. In this repo the allowlist workflow
-publishes [`allowlist/allowlist.json`](../allowlist/allowlist.json) on merge — the
-config-as-code loop. Blob **versioning + soft delete** give history/rollback.
+This section describes the **GitOps topology** (no control plane): the blob is written
+data-plane (`az storage blob upload --overwrite --auth-mode login`); writers hold **Storage
+Blob Data Contributor**. In this repo the allowlist workflow publishes
+[`allowlist/allowlist.json`](../allowlist/allowlist.json) on merge — the config-as-code loop.
+Blob **versioning + soft delete** give history/rollback.
+
+For per-team self-service — where the blob becomes a private store written only through a
+validating API, gated by platform-managed RBAC — see the [control plane](control-plane.md)
+(proposed).
 
 ## Proxy configuration (env)
 
