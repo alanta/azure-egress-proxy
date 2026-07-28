@@ -140,7 +140,7 @@
       },
       "Azure.Core": {
         "type": "CentralTransitive",
-        "requested": "[1.54.0, )",
+        "requested": "[1.60.0, )",
         "resolved": "1.55.0",
         "contentHash": "c7femvYS/xEUrLP1sNZN+DoQZmx3X+G3ZXtOOz0RL/7cGMCM3JVqepVmRd3AwM4IK8AtTGS4GOigCO+d/zaSsQ==",
         "dependencies": {
