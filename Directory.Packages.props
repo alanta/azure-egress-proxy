@@ -9,7 +9,7 @@
        Aspire packages are supplied implicitly by Aspire.AppHost.Sdk/13.4.6 and are
        deliberately absent below - that SDK version is pinned in AppHost.csproj. -->
   <ItemGroup>
-    <PackageVersion Include="Azure.Core" Version="1.54.0" />
+    <PackageVersion Include="Azure.Core" Version="1.60.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.5.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
