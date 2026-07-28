@@ -63,6 +63,11 @@ param proxyInstanceCount int = 2
 @maxValue(31)
 param proxyPublicIpPrefixLength int = 31
 
+@description('Idle timeout (minutes) for both legs of a CONNECT tunnel. Clients must retire pooled tunnels sooner — see docs/production-hardening.md § Idle timeouts.')
+@minValue(4)
+@maxValue(30)
+param proxyIdleTimeoutInMinutes int = 4
+
 @description('Hub VNet CIDR.')
 param hubVnetCidr string = '10.0.0.0/22'
 
@@ -116,6 +121,7 @@ module hub 'modules/hub.bicep' = {
     encryptionAtHost: encryptionAtHost
     proxyInstanceCount: proxyInstanceCount
     proxyPublicIpPrefixLength: proxyPublicIpPrefixLength
+    proxyIdleTimeoutInMinutes: proxyIdleTimeoutInMinutes
     hubVnetCidr: hubVnetCidr
     hubProxySubnetCidr: hubProxySubnetCidr
     proxyLoadBalancerPrivateIp: proxyLoadBalancerPrivateIp

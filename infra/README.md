@@ -37,6 +37,7 @@ scripts/deploy.sh
 | `proxyVmSku` | `Standard_B2pts_v2` | VMSS instance SKU (smallest ARM64 burstable; see the burst matrix below) |
 | `proxyInstanceCount` | `2` | VMSS instance count |
 | `proxyPublicIpPrefixLength` | `31` | Known egress CIDR size |
+| `proxyIdleTimeoutInMinutes` | `4` | Idle timeout on both tunnel legs (LB rule + instance public IP), max 30. Clients must close idle pooled tunnels sooner — see [production-hardening.md § Idle timeouts](../docs/production-hardening.md#idle-timeouts--the-stale-tunnel-contract) |
 
 ## Identity bootstrap
 

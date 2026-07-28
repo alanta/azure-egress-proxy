@@ -50,6 +50,11 @@ param hubProxySubnetCidr string
 @description('Internal LB private frontend IP.')
 param proxyLoadBalancerPrivateIp string
 
+@description('Idle timeout (minutes) for both legs of a CONNECT tunnel: the internal LB rule (client → proxy) and the instance public IP SNAT (proxy → destination). Clients must close pooled tunnels sooner than this — see docs/production-hardening.md § Idle timeouts.')
+@minValue(4)
+@maxValue(30)
+param proxyIdleTimeoutInMinutes int = 4
+
 var allowlistContainerName = 'egress-config'
 var allowlistBlobName = 'allowlist.json'
 // The control plane's own state (rulesets + platform grants). Only it writes this; the proxy
@@ -211,6 +216,12 @@ resource proxyLoadBalancer 'Microsoft.Network/loadBalancers@2024-05-01' = {
           protocol: 'Tcp'
           frontendPort: proxyPort
           backendPort: proxyPort
+          // A CONNECT tunnel that idles past this is reaped by the LB. Without
+          // enableTcpReset that reap is silent: both sockets stay ESTABLISHED and the
+          // client's next write black-holes until TCP retransmit gives up, minutes later.
+          // With it, the client fails fast with ECONNRESET — the NAT Gateway analog.
+          idleTimeoutInMinutes: proxyIdleTimeoutInMinutes
+          enableTcpReset: true
         }
       }
     ]
@@ -300,6 +311,10 @@ var vmssNicConfiguration = [
             }
             properties: {
               publicIPAddressVersion: 'IPv4'
+              // Second idle timer: the SNAT flow out to the destination. Kept equal to the
+              // LB rule's so both legs of a tunnel expire together rather than leaving a
+              // half-dead tunnel the client still believes in.
+              idleTimeoutInMinutes: proxyIdleTimeoutInMinutes
               publicIPPrefix: {
                 id: proxyPublicIpPrefix.outputs.resourceId
               }

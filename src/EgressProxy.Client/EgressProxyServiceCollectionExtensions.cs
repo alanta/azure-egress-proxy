@@ -11,6 +11,13 @@ namespace EgressProxy.Client;
 public static class EgressProxyServiceCollectionExtensions
 {
     /// <summary>
+    /// Upper bound for <see cref="EgressProxyOptions.PooledConnectionIdleTimeout"/>: the Azure
+    /// default idle timeout on the internal load balancer rule and on the instance public IP
+    /// SNAT flow (see <c>infra/modules/hub.bicep</c>, <c>proxyIdleTimeoutInMinutes</c>).
+    /// </summary>
+    internal static readonly TimeSpan MaxPooledConnectionIdleTimeout = TimeSpan.FromMinutes(4);
+
+    /// <summary>
     /// Configures HttpClientFactory defaults to route through <c>HTTPS_PROXY</c> using
     /// managed-identity credentials when proxy environment variables are present.
     /// </summary>
@@ -41,7 +48,10 @@ public static class EgressProxyServiceCollectionExtensions
             {
                 UseProxy = true,
                 Proxy = registration.Proxy,
-                DefaultProxyCredentials = registration.ProxyCredentials
+                DefaultProxyCredentials = registration.ProxyCredentials,
+                // Pinned, not inherited: a pooled tunnel must be retired by us before the
+                // proxy's own idle close (300 s), or the next reuse writes into a dead tunnel.
+                PooledConnectionIdleTimeout = registration.PooledConnectionIdleTimeout
             });
         });
 
@@ -76,6 +86,18 @@ public static class EgressProxyServiceCollectionExtensions
             throw new InvalidOperationException("Egress proxy audience is required when HTTPS_PROXY is set.");
         }
 
+        // Two things end an idle tunnel before a long-lived pool would reuse it: the proxy's own
+        // 300 s idle close, and (if keepalives ever stop covering the path) the 4-minute Azure
+        // idle timers on both legs. Staying under the lower of the two is a contract, not a knob.
+        if (options.PooledConnectionIdleTimeout <= TimeSpan.Zero
+            || options.PooledConnectionIdleTimeout >= MaxPooledConnectionIdleTimeout)
+        {
+            throw new InvalidOperationException(
+                $"EgressProxyOptions.PooledConnectionIdleTimeout must be greater than zero and below "
+                + $"{MaxPooledConnectionIdleTimeout.TotalMinutes} minutes so pooled tunnels are closed "
+                + "before the Azure idle timeout reaps them.");
+        }
+
         var clientId = options.ClientId;
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -92,10 +114,13 @@ public static class EgressProxyServiceCollectionExtensions
         var proxy = new NoProxyWebProxy(proxyUri, noProxyValue);
         var credentials = new EgressProxyCredentials(clientId, options.Audience, tokenCredential);
 
-        return new EgressProxyRegistration(proxy, credentials);
+        return new EgressProxyRegistration(proxy, credentials, options.PooledConnectionIdleTimeout);
     }
 
     private static TokenCredential CreateDefaultTokenCredential() => new DefaultAzureCredential();
 }
 
-internal sealed record EgressProxyRegistration(IWebProxy Proxy, ICredentials ProxyCredentials);
+internal sealed record EgressProxyRegistration(
+    IWebProxy Proxy,
+    ICredentials ProxyCredentials,
+    TimeSpan PooledConnectionIdleTimeout);

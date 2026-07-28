@@ -23,4 +23,12 @@ public sealed class EgressProxyOptions
     /// Defaults to <see cref="Azure.Identity.DefaultAzureCredential"/>.
     /// </summary>
     public TokenCredential? TokenCredential { get; set; }
+
+    /// <summary>
+    /// Gets or sets how long an idle pooled CONNECT tunnel is kept before the client closes it.
+    /// Must stay below the proxy's own idle close (300 s) and the Azure idle timeout on both
+    /// tunnel legs (4 min by default), or reuse writes into an already-closed tunnel.
+    /// Defaults to 1 minute.
+    /// </summary>
+    public TimeSpan PooledConnectionIdleTimeout { get; set; } = TimeSpan.FromMinutes(1);
 }
