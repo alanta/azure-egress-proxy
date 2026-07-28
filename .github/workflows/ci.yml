@@ -19,9 +19,9 @@ jobs:
       scripts: ${{ steps.filter.outputs.scripts }}
       workflow: ${{ steps.filter.outputs.workflow }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         with:
           filters: |
             proxy:
@@ -30,6 +30,7 @@ jobs:
               - 'AzureEgressProxy.slnx'
               - 'src/**'
               - 'Directory.Build.*'
+              - 'Directory.Packages.props'
               - 'global.json'
               - 'NuGet.config'
             infra:
@@ -45,7 +46,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build proxy Docker image
         run: |
           if [ ! -d proxy ]; then
@@ -60,8 +61,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.dotnet == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0.x
       - name: Build and test
@@ -70,7 +71,10 @@ jobs:
             echo "::notice::AzureEgressProxy.slnx not present yet; skipping .NET build/test."
             exit 0
           fi
-          dotnet build AzureEgressProxy.slnx --configuration Release
+          # --locked-mode fails the build if resolved packages drift from the committed
+          # packages.lock.json rather than silently restoring something else.
+          dotnet restore AzureEgressProxy.slnx --locked-mode
+          dotnet build AzureEgressProxy.slnx --configuration Release --no-restore
           dotnet test AzureEgressProxy.slnx --configuration Release --no-build
 
   bicep:
@@ -79,7 +83,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build Bicep templates
         run: |
           if [ ! -d infra ]; then
@@ -105,7 +109,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scripts == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run shellcheck on scripts
         run: |
           if [ ! -d scripts ]; then

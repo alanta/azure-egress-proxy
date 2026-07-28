@@ -104,6 +104,12 @@ These all showed up during live validation — they're normal:
   be denied — platform telemetry is deliberately routed direct and allowed at the NSG
   (`AzureMonitor` service tag) instead.
 
+## Contributing
+
+Read [SECURITY_GUIDELINES.md](SECURITY_GUIDELINES.md) before changing workflows or
+dependencies. It covers action pinning, workflow injection, NuGet Central Package
+Management and lock files, and ends with a pre-PR review checklist.
+
 ## Roadmap
 
 The control-plane API has landed (Mode 2 — per-team pipeline self-service; see

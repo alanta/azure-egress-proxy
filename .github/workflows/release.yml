@@ -29,18 +29,24 @@ jobs:
       publish_release: ${{ steps.meta.outputs.publish_release }}
       push_images: ${{ steps.meta.outputs.push_images }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - id: meta
         name: Resolve release metadata
+        # Context values are passed through env rather than interpolated into the
+        # script body, so nothing from `inputs` can be parsed as shell.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SNAPSHOT: ${{ inputs.snapshot }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "$EVENT_NAME" = "push" ]; then
             release_tag="${GITHUB_REF_NAME}"
             publish_release=true
             push_images=true
           else
-            input_tag="${{ inputs.tag }}"
-            snapshot="${{ inputs.snapshot }}"
+            input_tag="$INPUT_TAG"
+            snapshot="$INPUT_SNAPSHOT"
             if [ -n "$input_tag" ]; then
               case "$input_tag" in
                 v*) release_tag="$input_tag" ;;
@@ -67,7 +73,7 @@ jobs:
           echo "push_images=$push_images" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: proxy/go.mod
 
@@ -88,7 +94,7 @@ jobs:
           sha256sum egress-proxy_linux_amd64 egress-proxy_linux_arm64 > SHA256SUMS
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-binaries-${{ steps.meta.outputs.version }}
           path: dist/*
@@ -96,7 +102,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: steps.meta.outputs.publish_release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           files: |
@@ -112,13 +118,13 @@ jobs:
     needs: build
     if: needs.build.outputs.push_images == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -126,7 +132,7 @@ jobs:
 
       - name: Build and push proxy image
         if: ${{ hashFiles('proxy/Dockerfile') != '' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: proxy
           file: proxy/Dockerfile
@@ -138,7 +144,7 @@ jobs:
 
       - name: Build and push sample-app image
         if: ${{ hashFiles('src/SampleApp/Dockerfile') != '' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: src/SampleApp/Dockerfile
@@ -150,7 +156,7 @@ jobs:
 
       - name: Build and push control-plane image
         if: ${{ hashFiles('src/ControlPlane/Dockerfile') != '' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: src/ControlPlane/Dockerfile
