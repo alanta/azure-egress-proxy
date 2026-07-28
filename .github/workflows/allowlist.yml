@@ -7,6 +7,8 @@ on:
     paths:
       - 'allowlist/allowlist.json'
       - 'allowlist/allowlist.schema.json'
+      - 'allowlist/rulesets.json'
+      - 'allowlist/rulesets.schema.json'
 
 permissions:
   contents: read
@@ -22,6 +24,9 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --quiet jsonschema==4.23.0
           python -m jsonschema --instance allowlist/allowlist.json allowlist/allowlist.schema.json
+          # The control plane's own state is seeded from this file by deploy.sh, so a schema
+          # break here would surface as a failed deployment rather than a failed check.
+          python -m jsonschema --instance allowlist/rulesets.json allowlist/rulesets.schema.json
 
       - id: preflight
         name: Check Azure publish configuration

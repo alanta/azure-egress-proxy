@@ -1,5 +1,12 @@
 # The allowlist contract
 
+> **Two ways to write it.** This document describes the **allowlist document itself** — the
+> contract between the blob and the proxy, which is the same in both topologies. *Who* writes
+> it differs: in the **GitOps** topology (Mode 1) teams author this file directly and CI
+> publishes it; with the **control plane** (Mode 2) teams author *rulesets* through an API and
+> the control plane renders this file. See [control-plane.md](control-plane.md) for the
+> comparison, and § Write path below.
+
 The allowlist is a **single JSON document** in a blob:
 `egress-config/allowlist.json` in a locked-down storage account. The proxy reads it with
 its **own managed identity** (no secret) and reloads when the blob's **ETag** changes.
@@ -50,10 +57,35 @@ dominated by the poll interval — measured at ~5 s with a 5 s poll.
 
 ## Write path
 
+### GitOps topology (Mode 1) — no control plane
+
 The blob is written data-plane (`az storage blob upload --overwrite --auth-mode login`);
-writers hold **Storage Blob Data Contributor**. In this repo the allowlist workflow
-publishes [`allowlist/allowlist.json`](../allowlist/allowlist.json) on merge — the
-config-as-code loop. Blob **versioning + soft delete** give history/rollback.
+writers hold **Storage Blob Data Contributor**. In this repo the allowlist workflow publishes
+[`allowlist/allowlist.json`](../allowlist/allowlist.json) on merge — the config-as-code loop,
+with PR review as the trust boundary. Blob **versioning + soft delete** give history/rollback.
+
+### Control-plane topology (Mode 2) — per-team self-service
+
+The blob becomes a **rendered projection** that only the control plane writes. Teams no longer
+author this document at all; they push a **ruleset** — their workload's `subjects` plus its
+`allowed_hosts` and `action` — to a validating API, which enforces what a shared file cannot:
+
+- **Writer ≠ subject.** The identity allowed to write a ruleset is never the workload identity
+  it governs, so a compromised workload cannot widen its own allowlist.
+- **Subjects are write-once at onboard**, and a subject belongs to **at most one** ruleset
+  (one-to-one, first-come) — so a team cannot claim another workload's identity, and effective
+  policy always comes from exactly one place.
+- **`report` by default at onboard.** A new ruleset created without an explicit action starts
+  in `report` — the same on-ramp described above, made the default rather than something each
+  team has to remember. An explicit action is honoured, and the control plane never lowers a
+  ruleset's action on its own: adding a host to an already-enforcing ruleset does not
+  downgrade it.
+- **Audited full-replace.** A push is desired-state, so every added and removed host is logged
+  with the pushing identity, and `POST /rulesets/{name}:check` returns the diff before a push.
+
+Ruleset schema: [`allowlist/rulesets.schema.json`](../allowlist/rulesets.schema.json). Rendering
+emits one `modules[]` entry **per subject**, so this document's schema — and the proxy — do not
+change. Setup, RBAC, and `curl` examples: [control-plane.md](control-plane.md).
 
 ## Proxy configuration (env)
 

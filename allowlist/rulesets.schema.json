@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alanta/azure-egress-proxy/allowlist/rulesets.schema.json",
+  "title": "Egress control-plane ruleset store",
+  "description": "The control plane's entire internal state, in a SINGLE blob (egress-config/rulesets.json). It is NOT what the proxy reads: the control plane renders this document into allowlist.json, whose schema is frozen (see allowlist.schema.json). Written only by the control-plane API's identity; the grants section is platform-owned and the API never modifies it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rulesets"
+  ],
+  "properties": {
+    "rulesets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ruleset"
+      }
+    },
+    "grants": {
+      "description": "Platform-owned RBAC: which identities hold onboard/update/offboard/bind. Edited by the platform team out of band; read-only to the API, which splices it through every write untouched.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/grant"
+      }
+    },
+    "fallback": {
+      "description": "Platform-owned baseline for sources matching no ruleset. Rendered through to allowlist.json unchanged. If omitted or empty, fallback is deny-all.",
+      "oneOf": [
+        {
+          "type": "object",
+          "maxProperties": 0
+        },
+        {
+          "$ref": "#/$defs/fallback"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "ruleset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "subjects",
+        "content"
+      ],
+      "properties": {
+        "name": {
+          "description": "Unique slug; the ruleset's identity in the API path and the rendered module id.",
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "subjects": {
+          "description": "The workload identities this ruleset governs. Set at onboard; changing membership afterwards needs the 'bind' verb. A subject belongs to at most one ruleset.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/subject"
+          }
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "acl": {
+          "$ref": "#/$defs/acl"
+        },
+        "owner": {
+          "description": "Identity recorded trust-on-first-use at onboard; holds update/offboard/bind on this ruleset.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "subject": {
+      "description": "Exactly one of appid (managed-identity client ID, the token-mode key) or netid (source CIDR, the netid-mode key).",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "appid"
+          ]
+        },
+        {
+          "required": [
+            "netid"
+          ]
+        }
+      ],
+      "properties": {
+        "appid": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "netid": {
+          "type": "string",
+          "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\/(3[0-2]|[12]?[0-9])$"
+        }
+      }
+    },
+    "content": {
+      "description": "The writable part of a ruleset: what update replaces, in full.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_hosts"
+      ],
+      "properties": {
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostname"
+          }
+        },
+        "action": {
+          "description": "Uniform across the whole ruleset. Defaults to report when omitted at onboard; an explicit value is always honoured and the control plane never downgrades it.",
+          "type": "string",
+          "enum": [
+            "enforce",
+            "report",
+            "open"
+          ]
+        }
+      }
+    },
+    "acl": {
+      "description": "Reserved for the management portal (Mode 3). Not consulted by the Mode 2 write path, which authorizes against the platform RBAC grants plus TOFU ownership.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "edit": {
+          "$ref": "#/$defs/identityList"
+        },
+        "push": {
+          "$ref": "#/$defs/identityList"
+        },
+        "admin": {
+          "$ref": "#/$defs/identityList"
+        }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "verbs"
+      ],
+      "properties": {
+        "identity": {
+          "description": "The caller's appid/azp claim — a pipeline service-connection identity, never a governed workload.",
+          "type": "string",
+          "minLength": 1
+        },
+        "verbs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "onboard",
+              "update",
+              "offboard",
+              "bind"
+            ]
+          }
+        },
+        "rulesets": {
+          "description": "Scopes update/offboard/bind to these ruleset names. Omitted means every ruleset — platform-team grants only. Never scopes onboard, which is registry-wide by nature (the ruleset does not exist yet).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "note": {
+          "description": "Free text for the platform team; ignored by the API.",
+          "type": "string"
+        }
+      }
+    },
+    "identityList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_hosts"
+      ],
+      "properties": {
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostname"
+          }
+        }
+      }
+    },
+    "hostname": {
+      "type": "string",
+      "pattern": "^(?=.{1,253}$)(?:(?!-)[A-Za-z0-9-]{1,63}(?<!-)\\.)+(?:[A-Za-z]{2,63})$"
+    }
+  }
+}

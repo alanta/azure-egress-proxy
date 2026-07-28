@@ -7,8 +7,14 @@ const string azuriteAccountName = "devstoreaccount1";
 const string azuriteAccountKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 const string allowlistContainer = "egress-config";
 const string allowlistBlob = "allowlist.json";
+const string rulesetsBlob = "rulesets.json";
+const string mockIdpJwks = "http://localhost:18080/jwks";
+const string tokenIssuer = "https://mock-idp.local/";
+const string tokenAudience = "egress-proxy";
 
-var allowlistPath = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..", "allowlist", "allowlist.json"));
+var allowlistDirectory = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..", "allowlist"));
+var allowlistPath = Path.Combine(allowlistDirectory, "allowlist.json");
+var rulesetsPath = Path.Combine(allowlistDirectory, "rulesets.json");
 
 var azuriteConnectionStringForHost =
     $"DefaultEndpointsProtocol=http;AccountName={azuriteAccountName};AccountKey={azuriteAccountKey};BlobEndpoint=http://127.0.0.1:10000/{azuriteAccountName};";
@@ -24,6 +30,8 @@ var allowlistSeeder = builder.AddProject<Projects.AllowlistSeeder>("allowlist-se
     .WithEnvironment("ALLOWLIST_CONTAINER", allowlistContainer)
     .WithEnvironment("ALLOWLIST_BLOB", allowlistBlob)
     .WithEnvironment("ALLOWLIST_FILE", allowlistPath)
+    .WithEnvironment("RULESETS_BLOB", rulesetsBlob)
+    .WithEnvironment("RULESETS_FILE", rulesetsPath)
     .WaitFor(azurite);
 
 var mockIdp = builder.AddDockerfile("mock-idp", "../../mock-idp")
@@ -34,12 +42,27 @@ var proxy = builder.AddDockerfile("proxy", "../../proxy")
     .WithArgs("--egress-acl-file", "/render/acl.yaml")
     .WithEnvironment("SMOKESCREEN_ID_MODE", "basic-jwt")
     .WithEnvironment("JWKS_URL", "http://mock-idp:8080/jwks")
-    .WithEnvironment("EXPECT_ISS", "https://mock-idp.local/")
-    .WithEnvironment("EXPECT_AUD", "egress-proxy")
+    .WithEnvironment("EXPECT_ISS", tokenIssuer)
+    .WithEnvironment("EXPECT_AUD", tokenAudience)
     .WithEnvironment("ALLOWLIST_BLOB_CONNECTION_STRING", azuriteConnectionStringForContainers)
     .WithEnvironment("ALLOWLIST_CONTAINER", allowlistContainer)
     .WithEnvironment("ALLOWLIST_BLOB", allowlistBlob)
     .WithEnvironment("POLL_SECONDS", "5")
+    .WaitFor(mockIdp)
+    .WaitFor(azurite)
+    .WaitFor(allowlistSeeder);
+
+// Mode 2: the control plane is the sole writer of the allowlist blob the proxy polls read-only.
+// It runs on the host, so it reaches Azurite and the mock IdP through their mapped ports, and it
+// validates caller tokens against the same JWKS the proxy uses — one identity model for both planes.
+builder.AddProject<Projects.ControlPlane>("control-plane")
+    .WithEnvironment("ALLOWLIST_BLOB_CONNECTION_STRING", azuriteConnectionStringForHost)
+    .WithEnvironment("ALLOWLIST_CONTAINER", allowlistContainer)
+    .WithEnvironment("ALLOWLIST_BLOB", allowlistBlob)
+    .WithEnvironment("RULESETS_BLOB", rulesetsBlob)
+    .WithEnvironment("JWKS_URL", mockIdpJwks)
+    .WithEnvironment("EXPECT_ISS", tokenIssuer)
+    .WithEnvironment("EXPECT_AUD", tokenAudience)
     .WaitFor(mockIdp)
     .WaitFor(azurite)
     .WaitFor(allowlistSeeder);

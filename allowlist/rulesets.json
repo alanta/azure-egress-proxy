@@ -1,0 +1,62 @@
+{
+  "rulesets": [
+    {
+      "name": "sample-app",
+      "subjects": [
+        {
+          "appid": "11111111-1111-1111-1111-111111111111"
+        }
+      ],
+      "content": {
+        "allowed_hosts": [
+          "api.github.com"
+        ],
+        "action": "enforce"
+      },
+      "acl": {
+        "edit": [],
+        "push": [],
+        "admin": []
+      }
+    }
+  ],
+  "grants": [
+    {
+      "identity": "22222222-2222-2222-2222-222222222222",
+      "verbs": [
+        "onboard",
+        "update",
+        "offboard",
+        "bind"
+      ],
+      "rulesets": [
+        "sample-app"
+      ],
+      "note": "Demo pipeline service connection. onboard is registry-wide (the rulesets scope never applies to it); update/offboard/bind are limited to the seeded sample-app ruleset; bind lets the pipeline add a second workload to sample-app as the module grows. Rulesets this identity onboards itself are covered by trust-on-first-use ownership, not by this grant."
+    },
+    {
+      "identity": "55555555-5555-5555-5555-555555555555",
+      "verbs": [
+        "update"
+      ],
+      "rulesets": [
+        "payments",
+        "sample-app"
+      ],
+      "note": "Demo content-only pipeline: may push allowed_hosts and action, but holds no bind, so it cannot change which workloads a ruleset governs. This is the grant that shows bind is a separate permission rather than part of update."
+    },
+    {
+      "identity": "99999999-9999-9999-9999-999999999999",
+      "verbs": [
+        "onboard",
+        "update",
+        "offboard",
+        "bind"
+      ],
+      "note": "Demo platform-team identity: unscoped, so it can override any ruleset, including rebinding subjects."
+    }
+  ],
+  "fallback": {
+    "allowed_hosts": []
+  }
+}

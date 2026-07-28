@@ -4,6 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# Scratch space for the config documents this script patches before upload. They default to the
+# repo's tracked allowlist/*.json, so patching them in place would leave the working tree dirty
+# and feed already-patched files to the next run (it also broke the byte-for-byte renderer test).
+patch_dir="$(mktemp -d -t egress-deploy.XXXXXX)"
+trap 'rm -rf "$patch_dir"' EXIT
+
 # Lightweight step logging so it's clear what the script is doing and where it
 # stops if something fails. Steps go to stderr to keep stdout clean for the
 # final output values.
@@ -26,6 +32,13 @@ deployment_name="${DEPLOYMENT_NAME:-egress-proxy-demo}"
 # Set SAMPLE_APP_IMAGE to any MCR-pullable image to skip the ACR entirely.
 sample_app_image="${SAMPLE_APP_IMAGE:-}"
 sample_image_source="${SAMPLE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/sample-app:latest}"
+# Mode 2 (control-plane API) is opt-in: DEPLOY_CONTROL_PLANE=true deploys it and seeds its state
+# blob. Left false, this is the GitOps topology (Mode 1) and nothing below changes. The image is
+# imported into the demo ACR like the sample app's, for the same reason (GHCR is off the floor);
+# set CONTROL_PLANE_IMAGE to a ref that is already pullable to skip the import.
+deploy_control_plane="${DEPLOY_CONTROL_PLANE:-false}"
+control_plane_image="${CONTROL_PLANE_IMAGE:-}"
+control_plane_image_source="${CONTROL_PLANE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/control-plane:latest}"
 acr_name="${ACR_NAME:-${name_prefix}acr$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
 # Binary delivery. The VM fetches the proxy binary from PROXY_BINARY_URL at boot via
 # a plain (unauthenticated) curl, so it MUST be an http(s):// URL reachable from the
@@ -181,19 +194,26 @@ if [[ -z "$vm_admin_public_key" ]]; then
   exit 1
 fi
 
+# Bicep takes this as a bool, and az passes the string through: a typo like DEPLOY_CONTROL_PLANE=1
+# would silently deploy Mode 1 instead of failing, so reject anything that isn't true/false here.
+if [[ "$deploy_control_plane" != "true" && "$deploy_control_plane" != "false" ]]; then
+  echo "DEPLOY_CONTROL_PLANE must be 'true' or 'false' (got '$deploy_control_plane')." >&2
+  exit 1
+fi
+
 step "Setting up workload identity (setup-identity.sh)"
 "$repo_root/scripts/setup-identity.sh"
 
 step "Resolving / seeding proxy binary"
 resolve_proxy_binary
 
-container_registry_name=""
-if [[ -z "$sample_app_image" ]]; then
-  step "Preparing sample-app image in a private ACR"
-  container_registry_name="$acr_name"
-  image_tag="${sample_image_source##*:}"
-  sample_app_image="${acr_name}.azurecr.io/sample-app:${image_tag}"
+# Idempotent, but tracked anyway: it runs once per image and the second call has nothing to do.
+# Must be called from the parent shell — import_image runs inside a command substitution, so an
+# assignment made there would not survive.
+ensure_demo_acr() {
+  [[ -n "$acr_ready" ]] && return 0
 
+  local rg_create_args tag_pairs
   rg_create_args=()
   if [[ -n "$resource_group_tags" ]]; then
     read -r -a tag_pairs <<<"$resource_group_tags"
@@ -210,34 +230,68 @@ if [[ -z "$sample_app_image" ]]; then
     --admin-enabled false \
     --only-show-errors >/dev/null
 
+  acr_ready=1
+}
+
+# Import one GHCR image into the demo ACR. Both the sample app and the control plane run in the
+# CAE subnet, whose egress floor opens MCR and this ACR only — GHCR is not reachable from there,
+# so every image the platform runs has to come through here.
+# Args: <source ref> <repo name in acr> <dockerfile path, for the build-it-yourself hint>
+import_image() {
+  local source="$1" repo="$2" dockerfile="$3"
+  local tag="${source##*:}"
+  local target="${acr_name}.azurecr.io/${repo}:${tag}"
+
   # GHCR_USERNAME/GHCR_TOKEN are only needed while the source image is private.
-  import_args=()
+  local import_args=()
   if [[ -n "${GHCR_TOKEN:-}" ]]; then
     import_args+=(--username "${GHCR_USERNAME:-$USER}" --password "$GHCR_TOKEN")
   fi
-  info "Importing $sample_image_source -> $sample_app_image"
+  info "Importing $source -> $target"
   if ! az acr import \
     --name "$acr_name" \
-    --source "$sample_image_source" \
-    --image "sample-app:${image_tag}" \
+    --source "$source" \
+    --image "${repo}:${tag}" \
     --force \
     --only-show-errors \
     "${import_args[@]}"; then
     # Private forks (or a private GHCR package) can't be imported anonymously.
     # If the image is already in the ACR — e.g. built locally and pushed (see the hint
-    # below) — that is just as good. NB: `az acr build` does NOT work with this Dockerfile:
+    # below) — that is just as good. NB: `az acr build` does NOT work with these Dockerfiles:
     # ACR Tasks' dependency scanner can't parse the BuildKit `FROM --platform=$BUILDPLATFORM`
     # line, so build locally with docker/podman instead.
-    if az acr repository show --name "$acr_name" --image "sample-app:${image_tag}" --only-show-errors >/dev/null 2>&1; then
-      echo "WARN: import from $sample_image_source failed, but sample-app:${image_tag} already exists in $acr_name; continuing." >&2
+    if az acr repository show --name "$acr_name" --image "${repo}:${tag}" --only-show-errors >/dev/null 2>&1; then
+      echo "WARN: import from $source failed, but ${repo}:${tag} already exists in $acr_name; continuing." >&2
     else
-      echo "ERROR: cannot import $sample_image_source and $acr_name has no sample-app:${image_tag}." >&2
+      echo "ERROR: cannot import $source and $acr_name has no ${repo}:${tag}." >&2
       echo "Either set GHCR_USERNAME/GHCR_TOKEN, or build and push it locally:" >&2
-      echo "  docker build --platform linux/amd64 -t $acr_name.azurecr.io/sample-app:${image_tag} -f src/SampleApp/Dockerfile ." >&2
-      echo "  az acr login -n $acr_name && docker push $acr_name.azurecr.io/sample-app:${image_tag}" >&2
+      echo "  docker build --platform linux/amd64 -t $target -f $dockerfile ." >&2
+      echo "  az acr login -n $acr_name && docker push $target" >&2
       exit 1
     fi
   fi
+
+  printf '%s' "$target"
+}
+
+container_registry_name=""
+acr_ready=""
+
+if [[ -z "$sample_app_image" ]]; then
+  step "Preparing sample-app image in a private ACR"
+  container_registry_name="$acr_name"
+  ensure_demo_acr
+  sample_app_image="$(import_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
+fi
+
+# Mode 2. The control plane is the only writer of the allowlist blobs, so deploying it changes
+# the topology: DEPLOY_CONTROL_PLANE=true opts in, and everything below (its image, the bicep
+# flag, the state seed) follows from that one switch.
+if [[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]]; then
+  step "Preparing control-plane image in a private ACR"
+  container_registry_name="$acr_name"
+  ensure_demo_acr
+  control_plane_image="$(import_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
 fi
 
 read_json() {
@@ -283,7 +337,9 @@ az deployment sub create \
     resourceGroupTags="$rg_tags_json" \
     proxyBinaryUrl="$proxy_binary_url" \
     proxyBinarySha256="$proxy_binary_sha256" \
-    vmAdminPublicKey="$vm_admin_public_key"
+    vmAdminPublicKey="$vm_admin_public_key" \
+    deployControlPlane="$deploy_control_plane" \
+    controlPlaneImage="$control_plane_image"
 
 step "Reading deployment outputs"
 deployment_output_json="$(az deployment sub show --name "$deployment_name" --query properties.outputs -o json)"
@@ -319,7 +375,9 @@ PY
 )"
 
 step "Patching allowlist with sample-app client id ($sample_client_id)"
-python3 - "$allowlist_file" "$sample_client_id" <<'PY'
+allowlist_patched="$patch_dir/allowlist.json"
+cp "$allowlist_file" "$allowlist_patched"
+python3 - "$allowlist_patched" "$sample_client_id" <<'PY'
 import json,sys
 path,appid=sys.argv[1],sys.argv[2]
 doc=json.load(open(path,encoding="utf-8"))
@@ -335,11 +393,57 @@ az storage blob upload \
   --account-name "$allowlist_account" \
   --container-name "$allowlist_container" \
   --name "$allowlist_blob" \
-  --file "$allowlist_file" \
+  --file "$allowlist_patched" \
   --auth-mode login \
   --overwrite \
   --only-show-errors >/dev/null
 
+control_plane_url="$(python3 - "$deployment_output_json" <<'PY'
+import json,sys
+doc=json.loads(sys.argv[1])
+print(doc.get("controlPlaneUrl",{}).get("value",""))
+PY
+)"
+
+# Mode 2 only: seed the control plane's own state blob. The allowlist blob uploaded above is then
+# a rendered projection the control plane overwrites on its first push, so seeding both keeps the
+# proxy serving correct rules from the moment it starts.
+if [ -n "$control_plane_url" ]; then
+  rulesets_blob="$(python3 - "$deployment_output_json" <<'PY'
+import json,sys
+doc=json.loads(sys.argv[1])
+print(doc["rulesetsBlobName"]["value"])
+PY
+)"
+  rulesets_file="${RULESETS_FILE:-$repo_root/allowlist/rulesets.json}"
+
+  rulesets_patched="$patch_dir/rulesets.json"
+  cp "$rulesets_file" "$rulesets_patched"
+
+  step "Patching rulesets with sample-app client id ($sample_client_id)"
+  python3 - "$rulesets_patched" "$sample_client_id" <<'PY'
+import json,sys
+path,appid=sys.argv[1],sys.argv[2]
+doc=json.load(open(path,encoding="utf-8"))
+for ruleset in doc.get("rulesets",[]):
+    if ruleset.get("name")=="sample-app":
+        ruleset["subjects"]=[{"appid":appid}]
+json.dump(doc,open(path,"w",encoding="utf-8"),indent=2)
+open(path,"a",encoding="utf-8").write("\n")
+PY
+
+  step "Uploading control-plane state to $allowlist_account/$allowlist_container/$rulesets_blob"
+  az storage blob upload \
+    --account-name "$allowlist_account" \
+    --container-name "$allowlist_container" \
+    --name "$rulesets_blob" \
+    --file "$rulesets_patched" \
+    --auth-mode login \
+    --overwrite \
+    --only-show-errors >/dev/null
+fi
+
 log "Deployment complete"
 echo "Sample app URL: $app_url"
+[ -n "$control_plane_url" ] && echo "Control plane URL: $control_plane_url"
 echo "Demo command: scripts/demo.sh \"$app_url\""

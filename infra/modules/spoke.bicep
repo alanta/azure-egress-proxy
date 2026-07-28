@@ -25,6 +25,39 @@ param spokeAppsSubnetCidr string
 @description('Hub proxy subnet CIDR allowed as egress target.')
 param proxySubnetCidr string
 
+@description('Deploy the control-plane API (Mode 2) into this managed environment.')
+param deployControlPlane bool = false
+
+@description('Container image for the control-plane API.')
+param controlPlaneImage string = ''
+
+@description('Resource id of the control-plane user-assigned identity (created in the hub, next to the storage it owns).')
+param controlPlaneIdentityResourceId string = ''
+
+@description('Client id of the control-plane user-assigned identity.')
+param controlPlaneIdentityClientId string = ''
+
+@description('Principal id of the control-plane user-assigned identity, used for the ACR pull role assignment.')
+param controlPlaneIdentityPrincipalId string = ''
+
+@description('Blob service endpoint holding the allowlist and ruleset blobs.')
+param storageServiceUrl string = ''
+
+@description('Name of the blob holding the control plane state (rulesets + platform grants).')
+param rulesetsBlobName string = 'rulesets.json'
+
+@description('Name of the rendered blob the proxy reads.')
+param allowlistBlobName string = 'allowlist.json'
+
+@description('Name of the container holding both blobs.')
+param allowlistContainerName string = 'egress-config'
+
+@description('JWKS endpoint the control plane validates caller tokens against.')
+param jwksUrl string = ''
+
+@description('Expected issuer for caller tokens.')
+param expectIss string = ''
+
 // Image pulls from ACR need AzureContainerRegistry plus Storage.<region>:443 — ACR
 // Basic/Standard serve layer data from shared Azure Storage (per MS Learn "Securing a
 // virtual network in Azure Container Apps with NSGs"). The Storage allow softens the
@@ -392,6 +425,113 @@ module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
   }
 }
 
+resource controlPlaneAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployControlPlane && containerRegistryName != '') {
+  name: guid(subscription().id, resourceGroup().name, containerRegistryName, 'control-plane-acr-pull')
+  scope: containerRegistry
+  properties: {
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalId: controlPlaneIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The control plane shares the spoke's managed environment for demo economy, but it is platform
+// infrastructure: its identity lives in the hub and it is the sole writer of the allowlist blobs.
+// Its own egress goes direct to storage and the IdP (both in NO_PROXY) rather than through the
+// proxy — the control plane must not depend on the data plane it configures.
+module controlPlane 'br/public:avm/res/app/container-app:0.22.0' = if (deployControlPlane) {
+  name: 'control-plane'
+  dependsOn: [
+    controlPlaneAcrPull
+  ]
+  params: {
+    registries: containerRegistryName == '' ? [] : [
+      {
+        server: '${containerRegistryName}.azurecr.io'
+        identity: controlPlaneIdentityResourceId
+      }
+    ]
+    name: '${namePrefix}-control-plane'
+    location: location
+    environmentResourceId: managedEnvironment.outputs.resourceId
+    ingressExternal: true
+    ingressTargetPort: 8080
+    ingressTransport: 'http'
+    ingressAllowInsecure: false
+    managedIdentities: {
+      systemAssigned: false
+      userAssignedResourceIds: [
+        controlPlaneIdentityResourceId
+      ]
+    }
+    scaleSettings: {
+      minReplicas: 0
+      maxReplicas: 1
+      cooldownPeriod: 900
+    }
+    containers: [
+      {
+        name: 'control-plane'
+        image: controlPlaneImage
+        resources: {
+          cpu: json('0.5')
+          memory: '1Gi'
+        }
+        env: [
+          {
+            name: 'ASPNETCORE_URLS'
+            value: 'http://+:8080'
+          }
+          {
+            name: 'NO_PROXY'
+            value: '169.254.169.254,localhost,${managedEnvironment.outputs.defaultDomain},.${managedEnvironment.outputs.defaultDomain},.monitor.azure.com,.applicationinsights.azure.com,.livediagnostics.monitor.azure.com,.blob.core.windows.net'
+          }
+          {
+            // Managed-identity access to the blobs; AZURE_CLIENT_ID selects the user-assigned one.
+            name: 'STORAGE_SERVICE_URL'
+            value: storageServiceUrl
+          }
+          {
+            name: 'AZURE_CLIENT_ID'
+            value: controlPlaneIdentityClientId
+          }
+          {
+            name: 'ALLOWLIST_CONTAINER'
+            value: allowlistContainerName
+          }
+          {
+            name: 'ALLOWLIST_BLOB'
+            value: allowlistBlobName
+          }
+          {
+            name: 'RULESETS_BLOB'
+            value: rulesetsBlobName
+          }
+          {
+            // The same token validation the proxy performs, so one identity model covers both planes.
+            name: 'JWKS_URL'
+            value: jwksUrl
+          }
+          {
+            name: 'EXPECT_ISS'
+            value: expectIss
+          }
+          {
+            name: 'EXPECT_AUD'
+            value: expectAud
+          }
+          {
+            name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+            value: appInsights.outputs.connectionString
+          }
+        ]
+      }
+    ]
+  }
+}
+
+output controlPlaneFqdn string = deployControlPlane ? controlPlane!.outputs.fqdn : ''
+output controlPlaneUrl string = deployControlPlane ? 'https://${controlPlane!.outputs.fqdn}' : ''
 output spokeVnetName string = spokeVnet.outputs.name
 output spokeVnetResourceId string = spokeVnet.outputs.resourceId
 output sampleAppManagedIdentityClientId string = sampleAppIdentity.outputs.clientId

@@ -28,6 +28,7 @@ The repo contains everything to see it work:
 | Lift-ready .NET client library (proxy + credential wiring) | [`src/EgressProxy.Client/`](src/) |
 | Local dev loop (Aspire: proxy + Azurite + mock IdP + sample) | [`src/AppHost/`](src/) |
 | The allowlist (published to the blob by CI) | [`allowlist/allowlist.json`](allowlist/allowlist.json) |
+| Control-plane API for per-team self-service (optional) | [`src/ControlPlane/`](src/), [`docs/control-plane.md`](docs/control-plane.md) |
 | GitHub Actions (CI, release, deploy, allowlist publish) | [`.github/workflows/`](.github/workflows/) |
 
 ## Why explicit CONNECT, not a transparent proxy?
@@ -50,6 +51,10 @@ See [docs/architecture.md](docs/architecture.md) for the full design and its tra
 3. Edit `allowlist/allowlist.json`, then re-seed:
    `ALLOWLIST_CONNECTION_STRING='DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;' ALLOWLIST_FILE="$PWD/allowlist/allowlist.json" dotnet run --project src/AppHost/AllowlistSeeder/AllowlistSeeder.csproj`
 4. Wait ~5–10s (`POLL_SECONDS=5`) and hit the endpoint again to watch allow/deny flip.
+
+The stack also starts the optional **control-plane API**, so you can drive the same change
+through the validating write path instead of editing the file — onboard, dry-run, promote,
+offboard. See [docs/control-plane.md § Local development](docs/control-plane.md#local-development).
 
 Proxy decision logs are JSON lines in the proxy container output:
 `docker logs $(docker ps --format '{{.Names}}' | grep '^proxy-' | head -n1)`.
@@ -101,8 +106,9 @@ These all showed up during live validation — they're normal:
 
 ## Roadmap
 
-Dashboard, control-plane API + management portal, and a containerized proxy for
-Kubernetes are planned — see [ROADMAP.md](ROADMAP.md).
+The control-plane API has landed (Mode 2 — per-team pipeline self-service; see
+[docs/control-plane.md](docs/control-plane.md)). Dashboard, the management portal on top of
+that API, and a containerized proxy for Kubernetes are planned — see [ROADMAP.md](ROADMAP.md).
 
 ## License
 

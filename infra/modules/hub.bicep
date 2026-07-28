@@ -4,8 +4,11 @@ param location string = resourceGroup().location
 @description('Name prefix.')
 param namePrefix string
 
-@description('Principal object ID that should have write access to allowlist blobs.')
+@description('Principal object ID that should have write access to allowlist blobs. In the GitOps topology this is the CI identity that publishes allowlist.json; with the control plane deployed it is the PLATFORM team identity that seeds the state blob and edits its grants section — team pipelines never get a blob role in either case.')
 param deployerPrincipalId string
+
+@description('Deploy the control plane (Mode 2). When true, a user-assigned identity is created and becomes the only other writer of the allowlist blobs; the proxy stays read-only.')
+param deployControlPlane bool = false
 
 @description('JWKS URL used for proxy identity validation.')
 param jwksUrl string
@@ -49,6 +52,9 @@ param proxyLoadBalancerPrivateIp string
 
 var allowlistContainerName = 'egress-config'
 var allowlistBlobName = 'allowlist.json'
+// The control plane's own state (rulesets + platform grants). Only it writes this; the proxy
+// never reads it — the proxy consumes the rendered allowlistBlobName above.
+var rulesetsBlobName = 'rulesets.json'
 var proxyPort = 4750
 
 var proxyNsgRules = []
@@ -119,6 +125,16 @@ module proxyIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:
   name: 'proxy-uami'
   params: {
     name: '${namePrefix}-proxy-uami'
+    location: location
+  }
+}
+
+// Lives in the hub, next to the storage it owns: the control plane is platform infrastructure,
+// not a spoke workload, even though its container runs in the spoke's managed environment.
+module controlPlaneIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = if (deployControlPlane) {
+  name: 'control-plane-uami'
+  params: {
+    name: '${namePrefix}-control-plane-uami'
     location: location
   }
 }
@@ -230,19 +246,33 @@ module allowlistStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
       containerDeleteRetentionPolicyEnabled: true
       containerDeleteRetentionPolicyDays: 14
     }
-    roleAssignments: [
-      {
-        principalId: proxyIdentity.outputs.principalId
-        roleDefinitionIdOrName: 'Storage Blob Data Reader'
-        principalType: 'ServicePrincipal'
-      }
-      {
-        // No principalType: deploy.sh passes a User locally and a Service Principal
-        // from CI (OIDC); a mismatched hint fails the role assignment.
-        principalId: deployerPrincipalId
-        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
-      }
-    ]
+    // The proxy only ever reads; with the control plane deployed, its identity is the only
+    // service that writes. Workload team pipelines hold NO role here in either topology —
+    // under Mode 2 they reach the config exclusively through the control-plane API.
+    roleAssignments: concat(
+      [
+        {
+          principalId: proxyIdentity.outputs.principalId
+          roleDefinitionIdOrName: 'Storage Blob Data Reader'
+          principalType: 'ServicePrincipal'
+        }
+        {
+          // No principalType: deploy.sh passes a User locally and a Service Principal
+          // from CI (OIDC); a mismatched hint fails the role assignment.
+          principalId: deployerPrincipalId
+          roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+        }
+      ],
+      deployControlPlane
+        ? [
+            {
+              principalId: controlPlaneIdentity!.outputs.principalId
+              roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+              principalType: 'ServicePrincipal'
+            }
+          ]
+        : []
+    )
   }
 }
 
@@ -372,4 +402,9 @@ output allowlistStorageAccountName string = allowlistStorage.outputs.name
 output allowlistContainerName string = allowlistContainerName
 output allowlistBlobName string = allowlistBlobName
 output allowlistBlobUrl string = 'https://${allowlistStorage.outputs.name}.blob.${environment().suffixes.storage}/${allowlistContainerName}/${allowlistBlobName}'
+output rulesetsBlobName string = rulesetsBlobName
+output storageServiceUrl string = 'https://${allowlistStorage.outputs.name}.blob.${environment().suffixes.storage}'
+output controlPlaneIdentityResourceId string = deployControlPlane ? controlPlaneIdentity!.outputs.resourceId : ''
+output controlPlaneIdentityClientId string = deployControlPlane ? controlPlaneIdentity!.outputs.clientId : ''
+output controlPlaneIdentityPrincipalId string = deployControlPlane ? controlPlaneIdentity!.outputs.principalId : ''
 output workspaceResourceId string = observability.outputs.workspaceResourceId

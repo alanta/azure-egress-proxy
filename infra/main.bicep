@@ -12,8 +12,14 @@ param spokeResourceGroupName string = 'rg-egress-spoke'
 @description('Name prefix for deployed resources.')
 param namePrefix string = 'egress'
 
-@description('Principal object ID that should be able to update allowlist blobs.')
+@description('Principal object ID that should be able to update allowlist blobs. Without the control plane this is the GitOps CI identity; with it, the platform-team identity that seeds the state blob and owns its grants section.')
 param deployerPrincipalId string
+
+@description('Deploy the control-plane API (Mode 2). Its identity becomes the only service that writes the allowlist blobs; the proxy stays read-only and workload pipelines get no blob role. Leave false for the GitOps topology (Mode 1).')
+param deployControlPlane bool = false
+
+@description('Container image for the control-plane API. Required when deployControlPlane is true; must be pullable under the egress floor (see containerRegistryName).')
+param controlPlaneImage string = ''
 
 @description('Tenant ID used for identity validation.')
 param tenantId string
@@ -113,6 +119,7 @@ module hub 'modules/hub.bicep' = {
     hubVnetCidr: hubVnetCidr
     hubProxySubnetCidr: hubProxySubnetCidr
     proxyLoadBalancerPrivateIp: proxyLoadBalancerPrivateIp
+    deployControlPlane: deployControlPlane
   }
   dependsOn: [
     hubRg
@@ -132,6 +139,17 @@ module spoke 'modules/spoke.bicep' = {
     spokeVnetCidr: spokeVnetCidr
     spokeAppsSubnetCidr: spokeAppsSubnetCidr
     proxySubnetCidr: hubProxySubnetCidr
+    deployControlPlane: deployControlPlane
+    controlPlaneImage: controlPlaneImage
+    controlPlaneIdentityResourceId: hub.outputs.controlPlaneIdentityResourceId
+    controlPlaneIdentityClientId: hub.outputs.controlPlaneIdentityClientId
+    controlPlaneIdentityPrincipalId: hub.outputs.controlPlaneIdentityPrincipalId
+    storageServiceUrl: hub.outputs.storageServiceUrl
+    rulesetsBlobName: hub.outputs.rulesetsBlobName
+    allowlistBlobName: hub.outputs.allowlistBlobName
+    allowlistContainerName: hub.outputs.allowlistContainerName
+    jwksUrl: jwksUrl
+    expectIss: expectIss
   }
   dependsOn: [
     spokeRg
@@ -204,3 +222,5 @@ output sampleAppManagedIdentityClientId string = spoke.outputs.sampleAppManagedI
 output sampleAppFqdn string = spoke.outputs.sampleAppFqdn
 output sampleAppUrl string = spoke.outputs.sampleAppUrl
 output caeDefaultDomain string = spoke.outputs.caeDefaultDomain
+output rulesetsBlobName string = hub.outputs.rulesetsBlobName
+output controlPlaneUrl string = spoke.outputs.controlPlaneUrl

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5199",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ALLOWLIST_BLOB_CONNECTION_STRING": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;",
+        "ALLOWLIST_CONTAINER": "egress-config",
+        "ALLOWLIST_BLOB": "allowlist.json",
+        "RULESETS_BLOB": "rulesets.json",
+        "JWKS_URL": "http://localhost:18080/jwks",
+        "EXPECT_ISS": "https://mock-idp.local/",
+        "EXPECT_AUD": "egress-proxy"
+      }
+    }
+  }
+}
