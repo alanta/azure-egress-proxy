@@ -1,0 +1,26 @@
+version: 2
+
+# Actions are pinned to commit SHAs (see .github/workflows/*.yml), which means they
+# never drift on their own. Dependabot is what keeps those pins moving; without it,
+# pinning trades supply-chain risk for permanently stale, unpatched actions.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /proxy
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # The Aspire/Extensions packages version in lockstep; one PR per bump is noise.
+      microsoft:
+        patterns:
+          - Microsoft.*
+          - Aspire.*

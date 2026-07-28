@@ -22,10 +22,18 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - id: preflight
         name: Check required files and variables
+        # Context values are passed through env rather than interpolated into the
+        # script body, so nothing from `inputs`/`vars` can be parsed as shell.
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          DEMO_APP_URL: ${{ vars.DEMO_APP_URL }}
+          TEARDOWN: ${{ inputs.teardown }}
         run: |
           run_deploy=true
           run_teardown=false
@@ -35,12 +43,12 @@ jobs:
             run_deploy=false
           fi
 
-          if [ -z "${{ vars.AZURE_CLIENT_ID }}" ] || [ -z "${{ vars.AZURE_TENANT_ID }}" ] || [ -z "${{ vars.AZURE_SUBSCRIPTION_ID }}" ]; then
+          if [ -z "$AZURE_CLIENT_ID" ] || [ -z "$AZURE_TENANT_ID" ] || [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
             echo "::notice::AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID repo variables are not fully configured; skipping deploy."
             run_deploy=false
           fi
 
-          if [ "${{ inputs.teardown }}" = "true" ]; then
+          if [ "$TEARDOWN" = "true" ]; then
             if [ -f scripts/teardown.sh ]; then
               run_teardown=true
             else
@@ -50,11 +58,11 @@ jobs:
 
           echo "run_deploy=$run_deploy" >> "$GITHUB_OUTPUT"
           echo "run_teardown=$run_teardown" >> "$GITHUB_OUTPUT"
-          echo "app_url=${{ vars.DEMO_APP_URL }}" >> "$GITHUB_OUTPUT"
+          echo "app_url=$DEMO_APP_URL" >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
         if: steps.preflight.outputs.run_deploy == 'true'
-        uses: azure/login@v2
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -62,13 +70,16 @@ jobs:
 
       - name: Run deployment script
         if: steps.preflight.outputs.run_deploy == 'true'
-        run: bash scripts/deploy.sh "${{ inputs.location }}"
+        env:
+          LOCATION: ${{ inputs.location }}
+        run: bash scripts/deploy.sh "$LOCATION"
 
       - name: Smoke test sample app endpoints
         if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.app_url != ''
+        env:
+          APP_URL: ${{ steps.preflight.outputs.app_url }}
         run: |
-          app_url="${{ steps.preflight.outputs.app_url }}"
-          app_url="${app_url%/}"
+          app_url="${APP_URL%/}"
           deadline=$((SECONDS + 300))
           passed=false
 
