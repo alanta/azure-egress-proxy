@@ -56,7 +56,7 @@
 - [x] 8.1 Unit tests: `report` defaulting at onboard, explicit actions honoured, no downgrade on update, content-only update enforcement, membership change gated by `bind` (owner allowed, update-only refused), bind uniqueness, writer≠subject rejection, onboard uniqueness, TOFU ownership
 - [x] 8.2 Concurrency test: two concurrent writes to different rulesets both succeed; sustained same-ruleset contention returns `409`
 - [x] 8.3 API tests: authN (`401`), authZ per verb (`403`), onboard→update→offboard happy path, `:check` makes no write
-- [ ] 8.4 End-to-end (deployed): onboard + update a ruleset via `curl` + service principal/MI, observe the blob update, and verify the proxy's enforcement changes after reload
+- [x] 8.4 End-to-end (deployed): onboard + update a ruleset via `curl` + service principal/MI, observe the blob update, and verify the proxy's enforcement changes after reload
 
 ## 9. Documentation
 
