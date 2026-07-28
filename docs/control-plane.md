@@ -159,6 +159,27 @@ same state document and edited by the platform team out of band:
 RBAC administration is a **platform-team responsibility**, done out of band for now; managing
 it *through* the API is future work.
 
+### Bootstrapping grants after a deploy
+
+A freshly deployed control plane accepts **no writes from anyone**. `deploy.sh` seeds
+[`allowlist/rulesets.json`](../allowlist/rulesets.json) with placeholder grant identities
+(`22222222-…`, `55555555-…`, `99999999-…`) and patches only the sample app's *subject* — it
+never writes a real identity into `grants`. Reads work for any authenticated caller; every
+write returns `403` until the platform team adds a grant. That is deliberate (the API cannot
+grant authority to itself), but it means one manual step stands between deployment and use:
+
+1. `deployerPrincipalId` — you, or the CI identity that ran the deploy — receives
+   `Storage Blob Data Contributor` on the allowlist storage. That role *is* the bootstrap.
+2. Edit `egress-config/rulesets.json` directly and add the pipeline's identity to `grants`.
+3. From then on that pipeline self-serves through the API; nothing else needs blob access.
+
+**Grants only work for service principals.** An identity is matched against the token's
+`appid`/`azp` claim, which carries the *application* that obtained the token. A human's token
+carries the client app that signed them in (for `az`, `04b07795-8ddb-461a-bbee-02f9e1bf7b46`,
+shared by every CLI user in the tenant) — never their user object id. So putting a user's
+object id in `grants` has no effect, and putting the CLI's app id there would grant those verbs
+to everyone using the CLI. Grant a dedicated service principal per pipeline instead.
+
 ## The blob as a private store
 
 | | Blob role |
