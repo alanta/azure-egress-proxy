@@ -76,13 +76,13 @@ or a raised proxy `ReadTimeout`. That is exactly when you want it already on.
   Java `keepAliveDuration`. Anything above the proxy's 300 s idle close will hand out
   connections the proxy has already closed — cheap to retry, but only if the client retries.
 
-**Streaming and long-poll workloads still want keepalives.** `PooledConnectionIdleTimeout`
-does not apply to a connection with a request in flight, so an SSE stream, long-poll, gRPC
-stream, or slow query-over-HTTPS that goes quiet is protected by nothing on the client side —
-it depends entirely on keepalives further down the path staying enabled. The .NET client
-therefore enables its own **TCP keepalives**
-(30 s idle, 3 probes 5 s apart, `EgressProxyOptions.TcpKeepAliveTime`): keepalive traffic
-resets the idle timers, and a tunnel that is already gone surfaces within ~15 s. Configure the
-equivalent on other stacks (`SO_KEEPALIVE` + `TCP_KEEPIDLE`), or raise
-`proxyIdleTimeoutInMinutes` toward 30, or both. Application-level pings (HTTP/2 `PING`,
-websocket ping) work equally well — the timers only care that bytes move.
+**Streaming and long-poll workloads rely on the keepalives above.**
+`PooledConnectionIdleTimeout` does not apply to a connection with a request in flight, so an
+SSE stream, long-poll, gRPC stream, or slow query-over-HTTPS that goes quiet is protected by
+nothing on the client side — it depends on the proxy's keepalives continuing to cover the
+path. The shipped .NET client deliberately does *not* add a second layer of client-side
+keepalives; that would duplicate protection the proxy already provides. If you ever run a
+proxy build with keepalives disabled, add them at the client (`SO_KEEPALIVE` + `TCP_KEEPIDLE`,
+or .NET's `SocketsHttpHandler.ConnectCallback`), raise `proxyIdleTimeoutInMinutes` toward 30,
+or both. Application-level pings (HTTP/2 `PING`, websocket ping) work equally well — the
+timers only care that bytes move.

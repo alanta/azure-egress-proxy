@@ -2,7 +2,6 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
-using System.Net.Sockets;
 
 namespace EgressProxy.Client;
 
@@ -45,26 +44,14 @@ public static class EgressProxyServiceCollectionExtensions
 
         services.ConfigureHttpClientDefaults(builder =>
         {
-            builder.ConfigurePrimaryHttpMessageHandler(() =>
+            builder.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
-                var handler = new SocketsHttpHandler
-                {
-                    UseProxy = true,
-                    Proxy = registration.Proxy,
-                    DefaultProxyCredentials = registration.ProxyCredentials,
-                    // Pinned, not inherited: the tunnel must be retired by us before Azure's
-                    // idle reaper takes it, or the next reuse writes into a dead tunnel.
-                    PooledConnectionIdleTimeout = registration.PooledConnectionIdleTimeout
-                };
-
-                if (registration.TcpKeepAliveTime > TimeSpan.Zero)
-                {
-                    var keepAliveTime = registration.TcpKeepAliveTime;
-                    handler.ConnectCallback = (context, cancellationToken) =>
-                        ConnectWithKeepAliveAsync(context, keepAliveTime, cancellationToken);
-                }
-
-                return handler;
+                UseProxy = true,
+                Proxy = registration.Proxy,
+                DefaultProxyCredentials = registration.ProxyCredentials,
+                // Pinned, not inherited: a pooled tunnel must be retired by us before the
+                // proxy's own idle close (300 s), or the next reuse writes into a dead tunnel.
+                PooledConnectionIdleTimeout = registration.PooledConnectionIdleTimeout
             });
         });
 
@@ -99,9 +86,9 @@ public static class EgressProxyServiceCollectionExtensions
             throw new InvalidOperationException("Egress proxy audience is required when HTTPS_PROXY is set.");
         }
 
-        // Both tunnel legs (client → ILB → proxy, proxy → SNAT → destination) carry an Azure idle
-        // timer of 4 minutes by default. A pool that outlives it hands out tunnels the platform
-        // has already reaped, so this ordering is a contract, not a tuning knob.
+        // Two things end an idle tunnel before a long-lived pool would reuse it: the proxy's own
+        // 300 s idle close, and (if keepalives ever stop covering the path) the 4-minute Azure
+        // idle timers on both legs. Staying under the lower of the two is a contract, not a knob.
         if (options.PooledConnectionIdleTimeout <= TimeSpan.Zero
             || options.PooledConnectionIdleTimeout >= MaxPooledConnectionIdleTimeout)
         {
@@ -127,64 +114,7 @@ public static class EgressProxyServiceCollectionExtensions
         var proxy = new NoProxyWebProxy(proxyUri, noProxyValue);
         var credentials = new EgressProxyCredentials(clientId, options.Audience, tokenCredential);
 
-        return new EgressProxyRegistration(
-            proxy,
-            credentials,
-            options.PooledConnectionIdleTimeout,
-            options.TcpKeepAliveTime);
-    }
-
-    private static async ValueTask<Stream> ConnectWithKeepAliveAsync(
-        SocketsHttpConnectionContext context,
-        TimeSpan keepAliveTime,
-        CancellationToken cancellationToken)
-    {
-        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        try
-        {
-            EnableKeepAlive(socket, keepAliveTime);
-            await socket.ConnectAsync(context.DnsEndPoint, cancellationToken).ConfigureAwait(false);
-            return new NetworkStream(socket, ownsSocket: true);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
-    }
-
-    private static void EnableKeepAlive(Socket socket, TimeSpan keepAliveTime)
-    {
-        // Probe cadence once the idle period elapses: 3 probes, 5s apart, so a dead tunnel
-        // surfaces within ~15s of going quiet instead of on the application's next write.
-        TrySetSocketOption(socket, SocketOptionLevel.Socket, SocketOptionName.KeepAlive, 1);
-        TrySetSocketOption(
-            socket,
-            SocketOptionLevel.Tcp,
-            SocketOptionName.TcpKeepAliveTime,
-            Math.Max(1, (int)keepAliveTime.TotalSeconds));
-        TrySetSocketOption(socket, SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
-        TrySetSocketOption(socket, SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
-    }
-
-    // Keepalive tuning is best-effort: not every option is settable on every platform, and a
-    // missing knob must not cost the caller their connection.
-    private static void TrySetSocketOption(
-        Socket socket,
-        SocketOptionLevel level,
-        SocketOptionName name,
-        int value)
-    {
-        try
-        {
-            socket.SetSocketOption(level, name, value);
-        }
-        catch (SocketException)
-        {
-        }
-        catch (PlatformNotSupportedException)
-        {
-        }
+        return new EgressProxyRegistration(proxy, credentials, options.PooledConnectionIdleTimeout);
     }
 
     private static TokenCredential CreateDefaultTokenCredential() => new DefaultAzureCredential();
@@ -193,5 +123,4 @@ public static class EgressProxyServiceCollectionExtensions
 internal sealed record EgressProxyRegistration(
     IWebProxy Proxy,
     ICredentials ProxyCredentials,
-    TimeSpan PooledConnectionIdleTimeout,
-    TimeSpan TcpKeepAliveTime);
+    TimeSpan PooledConnectionIdleTimeout);

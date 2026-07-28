@@ -97,7 +97,6 @@ public sealed class EgressProxyClientTests
         Assert.True(
             registration.PooledConnectionIdleTimeout
                 < EgressProxyServiceCollectionExtensions.MaxPooledConnectionIdleTimeout);
-        Assert.Equal(TimeSpan.FromSeconds(30), registration.TcpKeepAliveTime);
     }
 
     [Theory]

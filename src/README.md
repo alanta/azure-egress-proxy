@@ -21,9 +21,9 @@ never outlive either:
 
 | Option | Default | Why |
 |---|---|---|
-| `PooledConnectionIdleTimeout` | 1 min | Retire idle pooled tunnels before Azure reaps them; values ≥ 4 min are rejected at startup. |
-| `TcpKeepAliveTime` | 30 s | Keeps in-use-but-quiet tunnels (SSE, long-poll, gRPC streaming) alive, and surfaces a dead one in ~15 s. `TimeSpan.Zero` disables. |
+| `PooledConnectionIdleTimeout` | 1 min | Retire idle pooled tunnels before the proxy or the platform closes them; values ≥ 4 min are rejected at startup. |
 
-Raise these only alongside `proxyIdleTimeoutInMinutes` in the infrastructure. Full rationale,
-including what non-.NET clients must configure:
+The client deliberately does *not* set its own TCP keepalives: the proxy already keepalives
+both legs, which is what keeps the Azure idle timers from firing at all. Full rationale, the
+measurements behind it, and what non-.NET clients must configure:
 [docs/production-hardening.md § Idle timeouts](../docs/production-hardening.md#idle-timeouts--the-stale-tunnel-contract).
