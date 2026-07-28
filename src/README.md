@@ -15,8 +15,9 @@ builder.Services.AddEgressProxy(options =>
 
 ## Idle tunnels
 
-Both legs of a CONNECT tunnel cross an Azure idle timer (4 min by default). The handler is
-configured so tunnels never outlive it:
+Both legs of a CONNECT tunnel cross an Azure idle timer (4 min by default), and the proxy
+itself closes an idle client connection at 300 s. The handler is configured so pooled tunnels
+never outlive either:
 
 | Option | Default | Why |
 |---|---|---|

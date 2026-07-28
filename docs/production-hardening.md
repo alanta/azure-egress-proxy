@@ -36,10 +36,34 @@ default; raisable to 30):
 | proxy → SNAT → destination | the VMSS instance public IP |
 
 The LB rule sets **`enableTcpReset: true`**, so a reap on the client-facing leg arrives as a
-prompt bidirectional RST: the next write fails immediately with `ECONNRESET` instead of
-black-holing. Failing fast is the goal — an idle tunnel is *expected* to die, and clients must
-treat that as retryable. TCP reset is not configurable on the instance public IP, so the
-outbound leg is covered by keepalives rather than RST.
+prompt bidirectional RST rather than a silent drop. TCP reset is not configurable on the
+instance public IP, so the outbound leg relies on keepalives instead.
+
+### What actually happens (measured)
+
+`enableTcpReset` is **defence in depth, not the load-bearing protection**. Probing the
+reference deployment from a VNet-integrated Container Apps replica (swedencentral,
+2026-07-28) showed the Azure reaper is never the thing that ends an idle connection, and
+**no black hole was reproducible** — before or after enabling reset:
+
+| Probed | Result |
+|---|---|
+| Idle client → LB → proxy flow, no tunnel | Clean **FIN at 300.7 s**, identical with reset off and on. Reuse failed in 0.0 s. |
+| Idle CONNECT tunnel to `api.github.com` | Clean **FIN at 31 s** — the destination closed its own keep-alive first. |
+
+Two mechanisms get there before the 4-minute timer:
+
+- **Go's default TCP keepalives** on both proxy legs (`net/http` on accepted client
+  connections, `net.Dialer` on outbound ones) put bytes on the wire well inside 4 minutes, so
+  the Azure idle timers keep getting reset and never fire.
+- **Smokescreen closes an idle client connection at 300 s** — its `DefaultReadTimeout`, which
+  `http.Server` also uses as `IdleTimeout` — with a graceful FIN. That is *after* the LB's
+  240 s, and the FIN still arrived, which is what proves the LB flow was alive the whole time.
+
+So a dead tunnel surfaces as an ordinary close (`EOF` / "connection reset by peer"), promptly,
+and clients must treat it as retryable. The reset setting matters only if a flow ever does
+reach the LB timer — keepalives disabled somewhere in the path, a client that suppresses them,
+or a raised proxy `ReadTimeout`. That is exactly when you want it already on.
 
 **The rule every client must follow:** close idle pooled tunnels *before* the platform does.
 
@@ -49,12 +73,14 @@ outbound leg is covered by keepalives rather than RST.
   ordering held only by accident, via the `SocketsHttpHandler` default.
 - **Non-.NET clients get no such guarantee** and must be configured explicitly: Go
   `http.Transport.IdleConnTimeout`, Python `urllib3` pool recycling, curl's connection reuse,
-  Java `keepAliveDuration`. Anything above the LB idle timeout will hand out dead tunnels.
+  Java `keepAliveDuration`. Anything above the proxy's 300 s idle close will hand out
+  connections the proxy has already closed — cheap to retry, but only if the client retries.
 
-**Streaming and long-poll workloads need keepalives.** `PooledConnectionIdleTimeout` does not
-apply to a connection with a request in flight, so an SSE stream, long-poll, gRPC stream, or
-slow query-over-HTTPS that goes quiet for 4 minutes is reaped mid-request — no idle-pool
-setting protects it, in any language. The .NET client therefore enables **TCP keepalives**
+**Streaming and long-poll workloads still want keepalives.** `PooledConnectionIdleTimeout`
+does not apply to a connection with a request in flight, so an SSE stream, long-poll, gRPC
+stream, or slow query-over-HTTPS that goes quiet is protected by nothing on the client side —
+it depends entirely on keepalives further down the path staying enabled. The .NET client
+therefore enables its own **TCP keepalives**
 (30 s idle, 3 probes 5 s apart, `EgressProxyOptions.TcpKeepAliveTime`): keepalive traffic
 resets the idle timers, and a tunnel that is already gone surfaces within ~15 s. Configure the
 equivalent on other stacks (`SO_KEEPALIVE` + `TCP_KEEPIDLE`), or raise
