@@ -84,6 +84,52 @@ public sealed class EgressProxyClientTests
     }
 
     [Fact]
+    public void RegistrationPinsPooledConnectionIdleTimeoutBelowAzureIdleTimeout()
+    {
+        var registration = BuildRegistrationWithProxy(new EgressProxyOptions
+        {
+            Audience = "api://egress",
+            ClientId = "client-id"
+        });
+
+        Assert.NotNull(registration);
+        Assert.Equal(TimeSpan.FromMinutes(1), registration.PooledConnectionIdleTimeout);
+        Assert.True(
+            registration.PooledConnectionIdleTimeout
+                < EgressProxyServiceCollectionExtensions.MaxPooledConnectionIdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), registration.TcpKeepAliveTime);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(4)]
+    [InlineData(10)]
+    public void BuildRegistrationRejectsPooledIdleTimeoutOutsideTheIdleContract(int minutes)
+    {
+        var options = new EgressProxyOptions
+        {
+            Audience = "api://egress",
+            ClientId = "client-id",
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(minutes)
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => BuildRegistrationWithProxy(options));
+
+        Assert.Contains("PooledConnectionIdleTimeout", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static EgressProxyRegistration? BuildRegistrationWithProxy(EgressProxyOptions options)
+    {
+        options.TokenCredential ??= new QueueTokenCredential(
+            new AccessToken("token-1", DateTimeOffset.UtcNow.AddMinutes(20)));
+
+        return EgressProxyServiceCollectionExtensions.BuildRegistration(
+            options,
+            name => name == "HTTPS_PROXY" ? "http://proxy.local:4750" : null);
+    }
+
+    [Fact]
     public void AddEgressProxyKeepsFactoryWorkingWhenProxyUnset()
     {
         var originalHttpsProxy = Environment.GetEnvironmentVariable("HTTPS_PROXY");

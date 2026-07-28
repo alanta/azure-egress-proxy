@@ -95,6 +95,11 @@ These all showed up during live validation — they're normal:
 - **`SrcIp` in the audit log rotates between subnet IPs** for a single Container App
   replica — ACA infrastructure nodes carry the egress. Identity comes from the JWT
   (`Role` column), never the source address.
+- **A connection idle for minutes comes back as `ECONNRESET` / "connection reset by peer".**
+  Both tunnel legs carry a 4-minute Azure idle timeout, and the LB is configured to reset
+  rather than silently drop, so an expired tunnel fails fast and is retryable. Clients must
+  retire idle pooled connections sooner — see
+  [docs/production-hardening.md § Idle timeouts](docs/production-hardening.md#idle-timeouts--the-stale-tunnel-contract).
 - **The proxy starts deny-all until the allowlist blob is seeded** (fail-closed);
   `deploy.sh` seeds it as its last step.
 - **The first request after ~15 idle minutes is slow (or one 504).** The sample app
