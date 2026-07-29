@@ -88,10 +88,12 @@ These all showed up during live validation — they're normal:
   timeout/cancellation). Resilience handlers (e.g. `Microsoft.Extensions.Http.Resilience`)
   retry the failed tunnel; whichever attempt's failure surfaces last is what you see. The
   outcome is stable: the request never leaves the network.
-- **Half the decision log is `"Client role cannot be determined"`.** That's the HTTP 407
-  proxy-auth handshake — clients send the first CONNECT of every connection without
-  credentials. See [docs/observability.md](docs/observability.md) for the KQL filter and
-  why you shouldn't drop those rows.
+- **One `CANONICAL-PROXY-AUTH-REQUIRED` row per connection.** That's the HTTP 407 proxy-auth
+  handshake — clients send the first CONNECT of every connection without credentials. It has
+  its own event type so the decision stream stays verdicts-only; a `CANONICAL-PROXY-DECISION`
+  with an empty `Role` means credentials were presented and *rejected*, and `DecisionReason`
+  names the cause. See [docs/observability.md](docs/observability.md) for the queries and why
+  you shouldn't drop the challenge rows.
 - **`SrcIp` in the audit log rotates between subnet IPs** for a single Container App
   replica — ACA infrastructure nodes carry the egress. Identity comes from the JWT
   (`Role` column), never the source address.

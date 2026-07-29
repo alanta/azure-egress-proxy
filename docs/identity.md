@@ -16,7 +16,8 @@ they *do* natively attach **Basic proxy credentials** after a
 
 1. Client CONNECTs without credentials → proxy answers `407` with
    `Proxy-Authenticate: Basic realm="egress"` (only on credential-less requests, so
-   denied-with-creds responses never loop).
+   denied-with-creds responses never loop). That step is audited as its own event,
+   `CANONICAL-PROXY-AUTH-REQUIRED` — see [observability.md](observability.md).
 2. Client retries with `Proxy-Authorization: Basic base64("<appid>:<MI access token>")` —
    the token rides in the **password**; the username is informational.
 3. Proxy validates the token exactly like a Bearer token — **RS256 signature via JWKS,

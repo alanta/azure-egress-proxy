@@ -11,7 +11,6 @@ Well-scoped items have been forked into GitHub issues:
 - [#5 — Event-driven allowlist reload (Event Grid)](https://github.com/alanta/azure-egress-proxy/issues/5)
 - [#6 — Publish `EgressProxy.Client` as a NuGet package](https://github.com/alanta/azure-egress-proxy/issues/6)
 - [#7 — B2pts ARM64 burstable VM cost experiment](https://github.com/alanta/azure-egress-proxy/issues/7)
-- [#8 — Distinct event type for the 407 pre-auth challenge](https://github.com/alanta/azure-egress-proxy/issues/8)
 
 ## Still shaping
 

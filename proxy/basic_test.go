@@ -83,22 +83,33 @@ func TestBasicChallengeHandler(t *testing.T) {
 		return &http.Response{StatusCode: code, Header: make(http.Header), Request: r}
 	}
 
+	// nil context: the handler must stay safe when there is no decision to annotate.
+	handler := newRejectHandler("basic-jwt")
+
 	if r := resp(http.StatusProxyAuthRequired, false); func() bool {
-		basicChallengeHandler(nil, r)
+		handler(nil, r)
 		return r.Header.Get("Proxy-Authenticate") == ""
 	}() {
 		t.Error("expected Basic challenge on credential-less 407")
 	}
 	if r := resp(http.StatusProxyAuthRequired, true); func() bool {
-		basicChallengeHandler(nil, r)
+		handler(nil, r)
 		return r.Header.Get("Proxy-Authenticate") != ""
 	}() {
 		t.Error("must not re-challenge a 407 that already presented creds")
 	}
 	if r := resp(http.StatusOK, false); func() bool {
-		basicChallengeHandler(nil, r)
+		handler(nil, r)
 		return r.Header.Get("Proxy-Authenticate") != ""
 	}() {
 		t.Error("must not add a challenge to a non-407 response")
+	}
+	// The non-Basic identity modes have no handshake: a credential-less request there is a
+	// genuine denial, and challenging it would invite a client loop.
+	if r := resp(http.StatusProxyAuthRequired, false); func() bool {
+		newRejectHandler("netid")(nil, r)
+		return r.Header.Get("Proxy-Authenticate") != ""
+	}() {
+		t.Error("must not challenge outside the Basic identity modes")
 	}
 }
