@@ -96,6 +96,7 @@ change. Setup, RBAC, and `curl` examples: [control-plane.md](control-plane.md).
 | `POLL_SECONDS` | ETag poll interval (default 10) |
 | `OUTPUT_FILE` | Rendered ACL path (default `/render/acl.yaml`) |
 | `SMOKESCREEN_ID_MODE` | Identity mode: `basic-jwt` (recommended), `basic-name`, `jwt`, `netid` — see [identity.md](identity.md) |
+| `LOG_PREAUTH_DETAIL` | `1` keeps the per-handshake `Unable to get role for request` diagnostic line, suppressed by default — see [observability.md](observability.md) |
 
 Setting either `ALLOWLIST_BLOB_*` variable turns on managed mode (the watch/render/reload
 loop). Without them the proxy runs standalone against a static ACL file — useful for

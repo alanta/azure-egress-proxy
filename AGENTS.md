@@ -42,8 +42,8 @@ Two documents are easy to miss and answer most "is this a bug?" questions:
   cloud-init binary fetch), check here first: it is probably a documented trade-off, not an
   oversight.
 - **[README.md](README.md) § FAQ / expected behaviours** — observed behaviours that look
-  broken and are not. Check here before "fixing" `curl` returning `000`, half the log rows
-  saying `Client role cannot be determined`, or `SrcIp` changing within one replica.
+  broken and are not. Check here before "fixing" `curl` returning `000`, a
+  `CANONICAL-PROXY-AUTH-REQUIRED` row per connection, or `SrcIp` changing within one replica.
 
 ## Where the code lives
 
@@ -92,9 +92,14 @@ audited full-replace.
 per subject precisely so the proxy does not have to change. Do not alter the rendered shape
 to suit the control plane.
 
-**Do not drop the no-role rows at the DCR.** A stream of credential-less `CONNECT`s that never
-converts to an authenticated row is what probing looks like. Filter them in queries, not at
-ingestion.
+**Do not drop the pre-auth rows at the DCR.** A stream of credential-less `CONNECT`s that never
+converts to an authenticated row is what probing looks like. The 407 handshake is *reclassified*
+as `CANONICAL-PROXY-AUTH-REQUIRED`, never discarded — filter it in queries, not at ingestion.
+The split keys on whether the client sent `Proxy-Authorization` at all, so a rejected credential
+stays a `CANONICAL-PROXY-DECISION` denial; do not widen it to a `DecisionReason` match, which
+would hide authentication failures. The proxy also rewrites Smokescreen's opaque
+`Client role cannot be determined` with the role func's actual error — keep identity failures
+self-explaining in the audit row itself, and never let a client-supplied header reach it.
 
 ## Commands
 

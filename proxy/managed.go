@@ -225,13 +225,13 @@ func cidrRolesFromModules(mods []module) []cidrRole {
 func managedRoleFromRequest(mode string, mods []module) func(*http.Request) (string, error) {
 	switch mode {
 	case "jwt":
-		return newJWTRole()
+		return withRoleErrorDetail(newJWTRole())
 	case "basic-jwt":
-		return newBasicJWTRole()
+		return withRoleErrorDetail(newBasicJWTRole())
 	case "basic-name":
-		return newBasicNameRole()
+		return withRoleErrorDetail(newBasicNameRole())
 	default:
-		return netIDRoleFunc(cidrRolesFromModules(mods))
+		return withRoleErrorDetail(netIDRoleFunc(cidrRolesFromModules(mods)))
 	}
 }
 
@@ -279,12 +279,10 @@ func runManaged() {
 
 		conf, err := cmd.NewConfiguration(nil, nil)
 		if err != nil || conf == nil {
-			logrus.Fatalf("Could not create configuration: %v", err)
+			logrus.Fatalf("could not create configuration: %v", err)
 		}
 		conf.RoleFromRequest = managedRoleFromRequest(mode, doc.Modules)
-		if isBasicMode(mode) {
-			conf.RejectResponseHandlerWithCtx = basicChallengeHandler
-		}
+		conf.RejectResponseHandlerWithCtx = newRejectHandler(mode)
 		applyJSONLogging(conf)
 
 		// Watch the ETag; close quit (=> smokescreen shuts down, loop restarts it) when the
