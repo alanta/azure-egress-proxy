@@ -1,0 +1,75 @@
+@model Portal.Pages.RuntimeModel
+@{
+    var scaleSet = Model.ScaleSet;
+}
+@* Refreshes against the server-side CACHE, never Azure (design.md D8 rule 3). Sixty seconds is
+   also Azure Monitor's grain, so the poll lands on new data rather than re-reading the same
+   sample faster than it can change. *@
+<div hx-get="/Runtime?handler=FleetPanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    <console-card eyebrow="Scale set" title="@Model.FleetTitle" icon="🖥️">
+        @if (scaleSet is null)
+        {
+            @* Not "zero nodes". A panel that rendered zeroes here would read as an outage; this is
+               the console saying it cannot see, which is a different thing entirely. *@
+            <div class="note dim">
+                The proxy scale set is not configured for this deployment, or is not readable by the
+                portal's identity.
+            </div>
+        }
+        else
+        {
+            <div class="instances">
+                @foreach (var node in scaleSet.Instances)
+                {
+                    <div class="inst">
+                        @* The dot is the first thing scanned down the list, so a node that is not
+                           powered on must not be wearing the healthy colour. *@
+                        <span class="st" style="background:@RuntimeModel.PowerColour(node)"
+                              title="@RuntimeModel.PowerLabel(node)"></span>
+                        <span class="mono" style="flex:1">@RuntimeModel.NodeName(scaleSet, node)</span>
+                        <span class="dim">@RuntimeModel.ImageLabel(node)</span>
+                        @if (node.ProvisioningState is { } state
+                            && !string.Equals(state, "Succeeded", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <span class="pill report">@state</span>
+                        }
+                        @* The instance-level public IP: the address a partner actually sees. *@
+                        @if (node.PublicIp is { } address)
+                        {
+                            <span class="mono dim">@address</span>
+                        }
+                        else
+                        {
+                            <span class="dim">no address readable</span>
+                        }
+                        <partial name="_Pill" model="@RuntimeModel.Health(node)" />
+                    </div>
+                }
+                @if (scaleSet.Instances.Count == 0)
+                {
+                    <div class="note dim">The scale set reports no instances.</div>
+                }
+            </div>
+            <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
+                @* The load balancer, from Azure Monitor rather than from the proxy — data-path
+                   availability and health-probe status, each on its own 1-minute sample. *@
+                <dl class="kv">
+                    @foreach (var signal in Model.LoadBalancer)
+                    {
+                        <dt>@signal.Label</dt>
+                        <dd>
+                            <partial name="_Pill" model="signal.Pill" />
+                            <span class="dim">@signal.Detail</span>
+                        </dd>
+                    }
+                </dl>
+            </div>
+            @if (Model.FleetFreshness is { } freshness)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="freshness" />
+                </div>
+            }
+        }
+    </console-card>
+</div>
