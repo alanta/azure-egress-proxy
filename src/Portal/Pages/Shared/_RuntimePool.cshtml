@@ -1,0 +1,90 @@
+@model Portal.Pages.RuntimeModel
+@{
+    var pool = Model.Pool;
+    var slots = Model.PoolSlots;
+}
+@*  The panel this surface exists for.
+
+    The proxy egresses from instance-level public IPs drawn from a prefix, not from a NAT gateway,
+    so the prefix — not any individual node — is the stable set of addresses partners allowlist on
+    their side. "How full is it" therefore has a consequence outside this deployment: past the last
+    address, the next node leaves from somewhere nobody has allowlisted and its traffic is refused
+    at the partner's edge, where this console cannot see it. That sentence is the panel; the grid
+    just makes it countable. *@
+<div hx-get="/Runtime?handler=PoolPanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    <console-card eyebrow="Egress addresses" title="@Model.PoolTitle" icon="📡">
+        @if (pool is null)
+        {
+            <div class="note dim">
+                No egress IP prefix is configured for this deployment, or it is not readable by the
+                portal's identity. This is not the same as a prefix with nothing assigned.
+            </div>
+        }
+        else
+        {
+            <p class="note" style="margin:0 0 12px">
+                Traffic leaves from this fixed block, so these are the addresses your partners
+                allowlist on their side. It does not change when instances are replaced.
+            </p>
+
+            <div class="stats" style="margin-bottom:12px">
+                <partial name="_Stat" model="@(new StatModel(
+                    pool.InUse.ToString(), "addresses assigned", StatTone.Neutral, $"/{pool.Capacity}"))" />
+                @* Spare capacity is a headcount, not a percentage: it is how many more nodes can
+                   exist before one of them egresses from an unallowlisted address. *@
+                <partial name="_Stat" model="@(new StatModel(
+                    pool.Available.ToString(), "spare · nodes the fleet can still add", Model.PoolTone))" />
+            </div>
+
+            @if (Model.PoolIsPressed)
+            {
+                <partial name="_Banner" model="@(new BannerModel(
+                    pool.Available == 0 ? "⛔" : "⚠️", Model.PoolConsequence))" />
+            }
+            else
+            {
+                <p class="note" style="margin:0 0 12px">@Model.PoolConsequence</p>
+            }
+
+            @if (slots.Count > 0)
+            {
+                <div class="pool">
+                    @foreach (var slot in slots)
+                    {
+                        @* Assigned addresses the console cannot attribute to a node are still drawn
+                           as in use — the prefix's own count is authoritative, and under-reporting
+                           how full the pool is is the one error this panel must not make. *@
+                        <div class="ip@(slot.InUse ? " used" : "")"
+                             title="@(slot.Address ?? slot.Label) @(slot.Node is null
+                                 ? (slot.InUse ? "· assigned" : "· spare")
+                                 : $"· {slot.Node}")">@slot.Label</div>
+                    }
+                </div>
+                <div class="legend">
+                    <span><i style="background:rgba(47,158,107,.35)"></i> In use</span>
+                    <span><i style="background:rgba(255,255,255,.7); border:1px solid var(--line)"></i> Spare</span>
+                    @if (pool.Prefix is { } prefix)
+                    {
+                        <span class="mono">@prefix</span>
+                    }
+                </div>
+            }
+            else if (pool.Capacity > 0)
+            {
+                @* A prefix too large to draw address by address still gets its numbers and its
+                   consequence; only the grid is dropped. *@
+                <p class="note dim" style="margin:0">
+                    /@pool.PrefixLength holds @pool.Capacity addresses — too many to draw
+                    individually. The counts above are the whole story.
+                </p>
+            }
+
+            @if (Model.PoolFreshness is { } freshness)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="freshness" />
+                </div>
+            }
+        }
+    </console-card>
+</div>
