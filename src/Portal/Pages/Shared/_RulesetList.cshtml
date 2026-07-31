@@ -1,0 +1,142 @@
+@model Portal.Pages.RulesetsModel
+@{
+    // Named rather than repeated inline: the same set drives the row's dash, the banner below, and
+    // the detail panel's explanation of why it has no traffic to show.
+    var sourceAttributed = Model.Rows.Where(r => r.Ruleset.IsNetworkAttributed).ToList();
+}
+@* The list's counts come from Log Analytics, so it refreshes against the server-side CACHE every
+   60 seconds — never Azure directly (design.md D8 rule 3). It carries the current selection so a
+   tick cannot move the highlight off the row the operator is reading, and it swaps only itself so
+   a tick cannot wipe the sandbox either. *@
+<div id="ruleset-list" hx-get="@Model.ListUrl" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="margin-bottom:16px">
+    <div class="card">
+        @if (Model.Policy is null)
+        {
+            <div class="note dim">The control plane could not be read, so no policy can be shown.</div>
+        }
+        else
+        {
+            @* Written directly rather than through _DataTable: a pill in the action column and a
+               row that swaps the detail panel are exactly the richer cells the shared model
+               deliberately does not express. Same classes, so it stays the same table. *@
+            <div class="tablewrap scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Ruleset</th>
+                            <th>Subjects</th>
+                            <th class="num">Allowed hosts</th>
+                            <th>Action</th>
+                            <th>Owner</th>
+                            <th class="num">Denials @TrafficWindows.Default.Label()</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (Model.Rows.Count == 0)
+                        {
+                            <tr>
+                                <td class="dim" colspan="6">
+                                    No rulesets. Every workload's traffic falls to the fallback.
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var row in Model.Rows)
+                        {
+                            var selected = row.Ruleset.Name == Model.Selected?.Name;
+                            <tr class="@(selected ? "sel" : "")">
+                                <td>
+                                    @* A button rather than a click handler on the row: it is
+                                       reachable from the keyboard without an hx-trigger event
+                                       filter, and those need unsafe-eval, which the console's CSP
+                                       does not grant. hx-push-url keeps the selection deep-linkable
+                                       and the back button working. *@
+                                    <button type="button" class="name"
+                                            style="background:none; border:0; padding:0; font:inherit; color:inherit; cursor:pointer"
+                                            aria-current="@(selected ? "true" : null)"
+                                            hx-get="@Model.SelectUrl(row.Ruleset.Name)"
+                                            hx-target="#ruleset-body"
+                                            hx-swap="outerHTML"
+                                            hx-push-url="@Model.PageUrl(row.Ruleset.Name)">@row.Ruleset.Name</button>
+                                </td>
+                                <td class="mono dim">@row.Subjects</td>
+                                <td class="num @(row.Ruleset.Action == RulesetAction.Open ? "fainter" : "")">@row.HostCount</td>
+                                <td><partial name="_Pill" model="@PillModel.For(row.Ruleset.Action)" /></td>
+                                <td class="mono dim">@row.Owner</td>
+                                @if (!Model.TrafficConfigured)
+                                {
+                                    <td class="num fainter">no workspace</td>
+                                }
+                                else if (row.Ruleset.IsNetworkAttributed)
+                                {
+                                    @* Not zero — unknown. Its traffic is attributed by source
+                                       address, which this join does not use. *@
+                                    <td class="num fainter">by source</td>
+                                }
+                                else
+                                {
+                                    <td class="num @(row.Denials > 0 && row.Denials == Model.BusiestDenials ? "bad" : "dim")"
+                                        style="@(row.Denials > 0 && row.Denials == Model.BusiestDenials ? "font-weight:600" : null)">
+                                        @row.Denials
+                                        @if (row.OffListHosts > 0)
+                                        {
+                                            @* Report denies nothing, so its number here is always
+                                               zero. The signal is what enforce WOULD have denied. *@
+                                            <span class="fainter">(@row.OffListHosts would deny)</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (sourceAttributed.Count > 0)
+            {
+                <div style="margin-top:16px">
+                    @* Explained in place, because "0 denials" and "not joinable by identity" look
+                       identical in a table and mean opposite things. *@
+                    <partial name="_Banner" model="@(new BannerModel("ℹ️", string.Join(", ",
+                        sourceAttributed.Select(r => r.Ruleset.Name))
+                        + (sourceAttributed.Count == 1 ? " is matched by source address, not identity." : " are matched by source address, not identity.")
+                        + " Their subjects are network ranges rather than workload identities, so"
+                        + " traffic is attributed to them by source IP — weaker by construction than"
+                        + " the validated-token match every other ruleset uses, and it shifts as"
+                        + " nodes rotate."))" />
+                </div>
+            }
+
+            @if (Model.UnattributedDenials > 0 || Model.AnonymousDenials > 0)
+            {
+                <div style="margin-top:12px">
+                    <p class="note" style="margin:0">
+                        @if (Model.UnattributedDenials > 0)
+                        {
+                            <text>
+                                <strong>@Model.UnattributedDenials denial(s) belong to no ruleset above.</strong>
+                                They carry a validated identity that no ruleset governs, so the
+                                fallback governs them — they are not counted against any row here.
+                            </text>
+                        }
+                        @if (Model.AnonymousDenials > 0)
+                        {
+                            <text>
+                                A further @Model.AnonymousDenials carried no identity at all:
+                                credentials were presented and rejected, which is not attributable
+                                to a ruleset either.
+                            </text>
+                        }
+                    </p>
+                </div>
+            }
+
+            @if (Model.Stamp is { } stamp)
+            {
+                <div style="margin-top:14px">
+                    <partial name="_Freshness" model="stamp" />
+                </div>
+            }
+        }
+    </div>
+</div>

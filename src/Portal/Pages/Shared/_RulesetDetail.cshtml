@@ -1,0 +1,137 @@
+@model Portal.Pages.RulesetsModel
+<console-card eyebrow="Ruleset detail" title="@(Model.Selected?.Name ?? "No ruleset selected")" icon="🔐">
+    @if (Model.Selected is not { } ruleset)
+    {
+        <div class="note dim">Select a ruleset to see its subjects, its hosts and what it is refusing.</div>
+    }
+    else
+    {
+        <dl class="kv" style="margin-bottom:16px">
+            <dt>Action</dt>
+            <dd><partial name="_Pill" model="@PillModel.For(ruleset.Action)" /></dd>
+
+            <dt>Owner</dt>
+            <dd class="mono">@(ruleset.Owner ?? "unowned")</dd>
+
+            <dt>Subjects</dt>
+            <dd>
+                @if (ruleset.Subjects.Count == 0)
+                {
+                    <span class="dim">None. Nothing is governed by this ruleset.</span>
+                }
+                @foreach (var subject in ruleset.Subjects)
+                {
+                    <div class="mono">
+                        @subject.Display
+                        @if (subject.IsNetwork)
+                        {
+                            @* Said on the subject itself, not only in the banner: this is the one
+                               row in the panel whose traffic is correlated by source address. *@
+                            <span class="fainter">· network range, matched by source address</span>
+                        }
+                    </div>
+                }
+            </dd>
+        </dl>
+
+        <div class="eyebrow" style="margin-bottom:8px">Allowed hosts</div>
+        @if (ruleset.AllowedHosts.Count == 0)
+        {
+            <div class="note dim">Empty. Nothing off the fallback is reachable for these subjects.</div>
+        }
+        else
+        {
+            <partial name="_HostList" model="@(new HostListModel(ruleset.AllowedHosts))" />
+        }
+
+        @if (ruleset.Action == RulesetAction.Open)
+        {
+            <div style="margin-top:12px">
+                <partial name="_Banner" model="@(new BannerModel("⚠️",
+                    "Action is open, so this list is not consulted at all. Every destination is "
+                    + "reachable for these subjects and the decision is only logged."))" />
+            </div>
+        }
+
+        <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--line)">
+            @if (ruleset.Action == RulesetAction.Report)
+            {
+                @* Report denies nothing, so the honest heading here is what enforce WOULD deny.
+                   This is what a promotion leads with — never how long the ruleset has sat in
+                   report, which is a legitimate steady state rather than rot. *@
+                <div class="eyebrow" style="margin-bottom:8px">
+                    Observed off-list · enforce would deny · @TrafficWindows.Default.Label()
+                </div>
+            }
+            else
+            {
+                <div class="eyebrow" style="margin-bottom:8px">
+                    Observed but denied · @TrafficWindows.Default.Label()
+                </div>
+            }
+
+            @{
+                var observed = ruleset.Action == RulesetAction.Report ? Model.OffList : Model.Denied;
+            }
+            @if (!Model.TrafficConfigured)
+            {
+                <div class="note dim">No audit workspace is configured, so no traffic can be read.</div>
+            }
+            else if (ruleset.IsNetworkAttributed)
+            {
+                @* The join key this table needs does not exist for this ruleset. Showing an empty
+                   table would read as "nothing was refused", which is a different claim. *@
+                <partial name="_Banner" model="@(new BannerModel("ℹ️",
+                    "Every subject here is a network range, so this ruleset's traffic is attributed "
+                    + "by source address rather than by the validated identity these tables join on. "
+                    + "Look it up by source address on the Traffic surface instead."))" />
+            }
+            else if (observed.Count == 0)
+            {
+                <div class="note dim">Nothing off-list in this window.</div>
+            }
+            else
+            {
+                <div class="tablewrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th class="num">Attempts</th>
+                                <th>Last seen</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var host in observed)
+                            {
+                                <tr>
+                                    <td class="mono">@host.Host</td>
+                                    <td class="num">@host.Attempts</td>
+                                    <td class="dim">@host.LastSeen.ToLocalTime().ToString("d MMM, HH:mm")</td>
+                                    <td class="num">
+                                        @* Composes a candidate change in the sandbox beside this
+                                           panel. It writes nothing and applies nothing: the
+                                           operator still runs the dry run, then applies it from
+                                           the pipeline. *@
+                                        <button type="button" class="btn"
+                                                hx-get="@Model.DraftUrl(host.Host)"
+                                                hx-target="#ruleset-check"
+                                                hx-swap="outerHTML">Draft change</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @if (Model.TrafficConfigured && !ruleset.IsNetworkAttributed && Model.AuditStamp is { } stamp)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="stamp" />
+                </div>
+            }
+        </div>
+    }
+</console-card>

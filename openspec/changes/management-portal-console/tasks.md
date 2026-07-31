@@ -80,42 +80,42 @@ No surface edits another's files.
 
 ### 7. Rulesets
 
-- [ ] 7.1 Ruleset list: subjects, host count, action, owner, denials — fixed height, sticky header, scrolls in place
-- [ ] 7.2 Detail panel swapped by `hx-get` on row selection: subjects, allowed hosts, action, owner
-- [ ] 7.3 Observed-but-denied hosts for the selected ruleset
-- [ ] 7.4 `:check` sandbox — `hx-post` returning the rendered `added`/`removed`/`bound`/`unbound` diff
-- [ ] 7.5 Copyable `curl`/pipeline snippet, with the pipeline named as the source of truth
-- [ ] 7.6 Explain in place that `netid` rulesets are attributed by source address rather than validated identity
+- [x] 7.1 Ruleset list: subjects, host count, action, owner, denials — fixed height, sticky header, scrolls in place
+- [x] 7.2 Detail panel swapped by `hx-get` on row selection: subjects, allowed hosts, action, owner
+- [x] 7.3 Observed-but-denied hosts for the selected ruleset
+- [x] 7.4 `:check` sandbox — `hx-post` returning the rendered `added`/`removed`/`bound`/`unbound` diff
+- [x] 7.5 Copyable `curl`/pipeline snippet, with the pipeline named as the source of truth
+- [x] 7.6 Explain in place that `netid` rulesets are attributed by source address rather than validated identity
 
 ### 8. Traffic
 
-- [ ] 8.1 Denials table: time, workload, source IP, governing ruleset, destination, reason
-- [ ] 8.2 Join denials to rulesets on `Role` = `subjects[].appid`; fall back to `SrcIp` for `netid` rulesets; show source IP for every row
-- [ ] 8.3 Attribute an unmatched subject to the fallback rather than to a ruleset
-- [ ] 8.4 Filters — window, subject, host — as `hx-get` with `hx-push-url`
-- [ ] 8.5 Rejected credentials: `CANONICAL-PROXY-DECISION` with an empty `Role`, grouped by reason
-- [ ] 8.6 Challenge conversion: sources challenged versus authenticated, as the probing signal
-- [ ] 8.7 Volume and top talkers from `CN-CLOSE` byte counts
+- [x] 8.1 Denials table: time, workload, source IP, governing ruleset, destination, reason
+- [x] 8.2 Join denials to rulesets on `Role` = `subjects[].appid`; fall back to `SrcIp` for `netid` rulesets; show source IP for every row
+- [x] 8.3 Attribute an unmatched subject to the fallback rather than to a ruleset
+- [x] 8.4 Filters — window, subject, host — as `hx-get` with `hx-push-url`
+- [x] 8.5 Rejected credentials: `CANONICAL-PROXY-DECISION` with an empty `Role`, grouped by reason
+- [x] 8.6 Challenge conversion: sources challenged versus authenticated, as the probing signal
+- [x] 8.7 Volume and top talkers from `CN-CLOSE` byte counts
 
 ### 9. Lookup
 
-- [ ] 9.1 Resolve an `appid` or `netid` to its governing ruleset, or report that it falls to the fallback
-- [ ] 9.2 Reverse index: given a host, which rulesets permit it — including `open` rulesets, marked as reaching everything regardless of host
-- [ ] 9.3 `hx-trigger="input changed delay:300ms"` against the resolution partial
+- [x] 9.1 Resolve an `appid` or `netid` to its governing ruleset, or report that it falls to the fallback
+- [x] 9.2 Reverse index: given a host, which rulesets permit it — including `open` rulesets, marked as reaching everything regardless of host
+- [x] 9.3 `hx-trigger="input changed delay:300ms"` against the resolution partial
 
 ### 10. Platform
 
-- [ ] 10.1 Grants table: identity, verbs, scope
-- [ ] 10.2 State plainly that authority is granted outside the portal and the API never writes it
-- [ ] 10.3 Fallback block, rendered so the deny-all floor is legible
+- [x] 10.1 Grants table: identity, verbs, scope
+- [x] 10.2 State plainly that authority is granted outside the portal and the API never writes it
+- [x] 10.3 Fallback block, rendered so the deny-all floor is legible
 
 ### 11. Runtime
 
-- [ ] 11.1 Scale-set instances: state, image, address, health
-- [ ] 11.2 Egress IP pool: prefix capacity versus addresses in use, with the partner-allowlist framing
-- [ ] 11.3 Throughput, CPU, and availability charts as server-rendered SVG
-- [ ] 11.4 Load-balancer data-path availability and probe status
-- [ ] 11.5 Freshness stamped on every panel
+- [x] 11.1 Scale-set instances: state, image, address, health
+- [x] 11.2 Egress IP pool: prefix capacity versus addresses in use, with the partner-allowlist framing
+- [x] 11.3 Throughput, CPU, and availability charts as server-rendered SVG
+- [x] 11.4 Load-balancer data-path availability and probe status
+- [x] 11.5 Freshness stamped on every panel
 
 ---
 
