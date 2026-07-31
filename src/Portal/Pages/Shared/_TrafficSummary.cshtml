@@ -1,0 +1,58 @@
+@model Portal.Pages.TrafficModel
+@{
+    var summary = Model.Summary;
+}
+@* Polls the server-side cache, never Azure — five panels times several operators times every-60s
+   is a Log Analytics bill that peaks exactly when the whole team is watching during an incident. *@
+<div hx-get="@Model.FilterUrl("SummaryPanel")" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="margin-bottom:16px">
+    @if (!Model.TrafficConfigured)
+    {
+        @* Not the same as a quiet window, and the surface must not let the two look alike. *@
+        <console-card eyebrow="Traffic" title="No audit workspace is configured" icon="🚦">
+            <div class="note dim">
+                Nothing here has been checked. These panels are empty because there is no workspace
+                to query, not because the proxy refused nothing.
+            </div>
+        </console-card>
+    }
+    else if (summary is null)
+    {
+        <console-card eyebrow="Traffic" title="The audit workspace could not be read" icon="🚦">
+            <div class="note dim">@(Model.Error ?? "The query failed.") No counts are shown rather than zeroes.</div>
+        </console-card>
+    }
+    else
+    {
+        <div class="grid g3">
+            <div class="card" style="padding:16px 20px">
+                <div class="eyebrow">Denied</div>
+                <div class="stat" style="margin-top:6px">
+                    <div class="k @(summary.Denials > 0 ? "bad" : "good")">@summary.Denials.ToString("N0")</div>
+                    <div class="l">policy denials, @Model.Window.Label()</div>
+                </div>
+            </div>
+            @* Credentials PRESENTED and rejected — a DECISION row with an empty Role. Distinct
+               from the 407 handshake beside it, which is a separate event type and not a denial. *@
+            <div class="card" style="padding:16px 20px">
+                <div class="eyebrow">Rejected credentials</div>
+                <div class="stat" style="margin-top:6px">
+                    <div class="k @(summary.AuthFailures > 0 ? "warn" : "good")">@summary.AuthFailures.ToString("N0")</div>
+                    <div class="l">token presented and refused</div>
+                </div>
+            </div>
+            @* Challenged and never once authenticated: the probing signal the 407 rows are kept
+               for rather than dropped at the DCR. An observation, not an alarm. *@
+            <div class="card" style="padding:16px 20px">
+                <div class="eyebrow">Unconverted challenges</div>
+                <div class="stat" style="margin-top:6px">
+                    <div class="k @(summary.UnconvertedChallenges > 0 ? "bad" : "good")">@summary.UnconvertedChallenges.ToString("N0")</div>
+                    <div class="l">sources that never authenticated</div>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top:10px">
+            <partial name="_Freshness" model="@FreshnessModel.From(summary.Freshness)" />
+        </div>
+    }
+</div>

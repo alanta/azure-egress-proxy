@@ -1,0 +1,90 @@
+@model Portal.Pages.TrafficModel
+@*
+    8.6 — CANONICAL-PROXY-AUTH-REQUIRED against the decisions that carried a role.
+
+    Every authenticated connection begins with exactly one credential-less CONNECT, so challenges
+    roughly matching authentications is the healthy shape. A source that is challenged and never
+    converts is what probing looks like from the proxy's side — which is precisely why these rows
+    are reclassified at the DCR rather than dropped. It is an observation to read, not an alarm:
+    the console does not page anyone and has no notion of "wrong".
+*@
+@{
+    var probing = Model.Challenges.Where(source => source.NeverConverted).ToList();
+}
+<div hx-get="@Model.FilterUrl("ChallengesPanel")" hx-trigger="every 60s" hx-swap="outerHTML">
+    <console-card eyebrow="Challenges" title="Whether each source converted to an authenticated call" icon="🛰️">
+        @if (!Model.TrafficConfigured)
+        {
+            <div class="note dim">No audit workspace is configured, so nothing has been checked.</div>
+        }
+        else
+        {
+            <div class="tablewrap scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th class="num">Challenged</th>
+                            <th class="num">Authenticated</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (Model.Challenges.Count == 0)
+                        {
+                            <tr>
+                                <td class="dim" colspan="4">No source was challenged in the @Model.Window.Label().</td>
+                            </tr>
+                        }
+                        @foreach (var source in Model.Challenges)
+                        {
+                            <tr>
+                                <td class="mono">@source.SourceIp</td>
+                                <td class="num">@source.Challenges.ToString("N0")</td>
+                                <td class="num">@source.Authenticated.ToString("N0")</td>
+                                <td style="text-align:right">
+                                    @if (source.NeverConverted)
+                                    {
+                                        <span class="pill open" title="Challenged, and never once authenticated.">Never converted</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="pill enforce">Converted</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="note" style="margin:14px 0 0">
+                @if (probing.Count == 0)
+                {
+                    <text>
+                        Every source that was challenged went on to authenticate. A source challenged
+                        repeatedly that never authenticates is what probing looks like; there is none
+                        in this window.
+                    </text>
+                }
+                else
+                {
+                    <text>
+                        <strong>@probing.Count source(s)</strong> were challenged and never
+                        authenticated, over @(probing.Sum(source => source.Challenges).ToString("N0"))
+                        credential-less connections. That is the shape probing has from the proxy's
+                        side. It is also the shape of a workload whose credentials are misconfigured,
+                        so read it before acting on it — this is an observation, not an alert.
+                    </text>
+                }
+            </p>
+
+            @if (Model.Summary is not null)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(Model.Summary.Freshness)" />
+                </div>
+            }
+        }
+    </console-card>
+</div>
