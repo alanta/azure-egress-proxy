@@ -1,0 +1,171 @@
+@model Portal.Pages.TrafficModel
+@*
+    The denial → owning ruleset join, which is the reason this console exists. Written as a table
+    directly rather than through _DataTable: the "Governed by" cell carries a pill and an
+    attribution chip, and the shared model is deliberately not grown until it can express arbitrary
+    markup. Same classes, same look.
+*@
+@{
+    var hidden = Model.DenialsInWindow - Model.Denials.Count;
+    var networkRows = Model.Denials.Any(d => d.Attribution == DenialAttribution.Network);
+}
+<div hx-get="@Model.FilterUrl("DenialsPanel")" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="margin-bottom:16px">
+    <console-card eyebrow="Denials" title="Each row resolves to the rule that caused it" icon="🚫">
+        @if (!Model.TrafficConfigured)
+        {
+            <div class="note dim">
+                No audit workspace is configured, so no decisions can be read. This is not an empty
+                window.
+            </div>
+        }
+        else
+        {
+            @* Scrolls in place: denials grow without bound and everything below must stay
+               reachable. Fixed height, sticky header. *@
+            <div class="tablewrap scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time (UTC)</th>
+                            <th>Workload</th>
+                            <th>Source</th>
+                            <th>Governed by</th>
+                            <th>Destination</th>
+                            <th>Why</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (Model.Denials.Count == 0)
+                        {
+                            <tr>
+                                <td class="dim" colspan="6">
+                                    @if (Model.Error is not null)
+                                    {
+                                        <text>@Model.Error — no rows are shown rather than none having occurred.</text>
+                                    }
+                                    else if (Model.HasFilter && Model.DenialsInWindow > 0)
+                                    {
+                                        <text>No denial in the @Model.Window.Label() matches this filter. @Model.DenialsInWindow did not.</text>
+                                    }
+                                    else
+                                    {
+                                        <text>Nothing was denied in the @Model.Window.Label().</text>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var denial in Model.Denials)
+                        {
+                            var row = denial.Row;
+                            <tr>
+                                <td class="mono dim">@row.TimeGenerated.UtcDateTime.ToString("MMM dd HH:mm:ss")</td>
+
+                                @* The validated appid. Empty in netid mode, where identity is the
+                                   source network rather than a token claim. *@
+                                @if (row.Role is { Length: > 0 } role)
+                                {
+                                    <td class="mono" title="@role">@TrafficFormat.Short(role)</td>
+                                }
+                                else
+                                {
+                                    <td class="fainter">—</td>
+                                }
+
+                                @* Shown on every row, always. It is context — never an identity. *@
+                                <td class="mono dim">@row.SourceIp</td>
+
+                                <td>
+                                    @if (denial.Ruleset is { } ruleset)
+                                    {
+                                        <span class="name">@ruleset.Name</span>
+                                        <partial name="_Pill" model="@PillModel.For(ruleset.Action)" />
+
+                                        @* Correlated on source address, not matched on a validated
+                                           identity. The chip says so on the row itself, so the
+                                           weaker join is never read as the stronger one. *@
+                                        if (denial.Attribution == DenialAttribution.Network)
+                                        {
+                                            <span class="pill plain" title="Matched because the source address falls inside a netid subject's CIDR. A source address is not an identity.">By address</span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="dim">No ruleset</span>
+                                        <span class="pill plain">Fallback</span>
+                                    }
+                                </td>
+
+                                <td class="mono">@row.Host</td>
+
+                                <td class="dim">
+                                    @if (row.DecisionReason is { Length: > 0 } reason)
+                                    {
+                                        @reason
+                                    }
+                                    else if (denial.Attribution == DenialAttribution.Fallback)
+                                    {
+                                        <text>Subject matches no ruleset; the fallback governs it.</text>
+                                    }
+                                    else
+                                    {
+                                        <text>Not in the allowed host list.</text>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (hidden > 0)
+            {
+                <p class="note" style="margin:12px 0 0">
+                    @hidden further denial(s) in the @Model.Window.Label() are hidden by the filter.
+                </p>
+            }
+
+            @* 8.3, stated rather than left to be inferred from an empty cell. *@
+            @if (Model.Denials.Any(d => d.Attribution == DenialAttribution.Fallback))
+            {
+                <div style="margin-top:14px">
+                    <partial name="_Banner" model="@(new BannerModel("🧭",
+                        Model.Policy?.Fallback.DenyAll == true
+                            ? "Rows marked Fallback come from a subject no ruleset governs, so the "
+                              + "platform floor applies — and that floor is deny-all. They are not "
+                              + "attributed to a ruleset, because none governs them. Identify the "
+                              + "workload before widening anything."
+                            : "Rows marked Fallback come from a subject no ruleset governs, so the "
+                              + "platform baseline applies rather than a ruleset of their own."))" />
+                </div>
+            }
+
+            @* The weaker join, explained where it is used. *@
+            @if (networkRows)
+            {
+                <div style="margin-top:10px">
+                    <partial name="_Banner" model="@(new BannerModel("📡",
+                        "Rows tagged By address were correlated on the source address against a "
+                        + "netid subject's CIDR, because the decision carried no validated appid to "
+                        + "join on. That is weaker than an identity match by construction: a source "
+                        + "address is not an identity, and one workload replica can egress from "
+                        + "several rotating node addresses."))" />
+                </div>
+            }
+
+            @* Report-mode rulesets deny nothing, so they contribute no row here — said out loud so
+               an empty table is not read as an all-clear for a ruleset that is only observing. *@
+            <p class="note" style="margin:12px 0 0">
+                Only refusals appear here. A ruleset in <strong>report</strong> permits off-list
+                hosts and logs them, so it produces no denials however far off-list it goes.
+            </p>
+
+            @if (Model.Summary is not null)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(Model.Summary.Freshness)" />
+                </div>
+            }
+        }
+    </console-card>
+</div>

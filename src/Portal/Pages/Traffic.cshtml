@@ -1,0 +1,29 @@
+@page
+@model Portal.Pages.TrafficModel
+
+<partial name="_PageHead" model="@(new PageHeadModel(
+    "Traffic",
+    "Every proxy decision, joined to the ruleset that governs the workload that made it."))" />
+
+@*
+    Everything a filter changes lives in one region, because a filter changes what every panel
+    shows. The filter controls hx-get this address with hx-push-url, and hx-select pulls this same
+    region back out of the response — so the filtered view is a real URL, reachable by the back
+    button and pasteable into a ticket.
+
+    The mockup carries its freshness stamp in the page head. Here each panel refreshes on its own
+    60-second trigger, so each carries its own stamp instead: one stamp above panels that update
+    independently would be describing whichever of them refreshed last.
+*@
+<div id="traffic-results">
+    <partial name="_TrafficFilters" model="Model" />
+    <partial name="_TrafficSummary" model="Model" />
+    <partial name="_TrafficDenials" model="Model" />
+
+    <div class="grid g2">
+        <partial name="_TrafficCredentials" model="Model" />
+        <partial name="_TrafficChallenges" model="Model" />
+    </div>
+
+    <partial name="_TrafficVolume" model="Model" />
+</div>

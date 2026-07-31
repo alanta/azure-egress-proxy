@@ -1,0 +1,71 @@
+@model Portal.Pages.TrafficModel
+@*
+    Window, subject and host. Every control is a plain hx-get carrying real query-string values,
+    with hx-push-url so the filtered view is a URL an operator can paste into a ticket. Nothing here
+    computes a parameter in the browser: the portal's CSP grants no script evaluation, and the
+    eval-based htmx affordances are forbidden outright — a filter whose value only exists inside a
+    page would not survive being shared anyway.
+
+    The whole result region is the target, because a filter changes what every panel below shows.
+*@
+@{
+    var windows = new[]
+    {
+        (Window: TrafficWindow.LastHour, Label: "Last hour"),
+        (Window: TrafficWindow.LastDay, Label: "Last 24 hours"),
+        (Window: TrafficWindow.LastWeek, Label: "Last 7 days"),
+    };
+}
+<div class="card" style="margin-bottom:16px; padding:16px 20px">
+    <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end">
+        <div>
+            <div class="eyebrow" style="margin-bottom:7px">Window</div>
+            <div style="display:flex; gap:6px">
+                @foreach (var choice in windows)
+                {
+                    <a class="btn@(choice.Window == Model.Window ? " primary" : "")"
+                       href="@Model.FilterUrl(window: choice.Window)"
+                       hx-get="@Model.FilterUrl(window: choice.Window)"
+                       hx-push-url="true"
+                       hx-target="#traffic-results"
+                       hx-select="#traffic-results"
+                       hx-swap="outerHTML"
+                       aria-current="@(choice.Window == Model.Window ? "true" : null)">@choice.Label</a>
+                }
+            </div>
+        </div>
+
+        @* A real GET form, so it works as an ordinary navigation too and htmx has query-string
+           values to push rather than anything it had to evaluate. *@
+        <form method="get" action="@Surface.Traffic.Path"
+              hx-get="@Surface.Traffic.Path"
+              hx-push-url="true"
+              hx-target="#traffic-results"
+              hx-select="#traffic-results"
+              hx-swap="outerHTML"
+              style="display:flex; gap:10px; align-items:flex-end; flex:1; min-width:320px">
+            <input type="hidden" name="window" value="@Model.Window.ToQueryValue()" />
+            <div style="flex:1">
+                <label class="eyebrow" for="filter-subject" style="display:block; margin-bottom:7px">Subject</label>
+                <input class="search" id="filter-subject" name="subject" value="@Model.Subject"
+                       spellcheck="false" autocomplete="off"
+                       placeholder="appid, ruleset name, or source address" />
+            </div>
+            <div style="flex:1">
+                <label class="eyebrow" for="filter-host" style="display:block; margin-bottom:7px">Destination</label>
+                <input class="search" id="filter-host" name="host" value="@Model.Host"
+                       spellcheck="false" autocomplete="off" placeholder="host" />
+            </div>
+            <button class="btn" type="submit">Filter</button>
+            @if (Model.HasFilter)
+            {
+                <a class="btn" href="@Model.FilterUrl(subject: "", host: "")"
+                   hx-get="@Model.FilterUrl(subject: "", host: "")"
+                   hx-push-url="true"
+                   hx-target="#traffic-results"
+                   hx-select="#traffic-results"
+                   hx-swap="outerHTML">Clear</a>
+            }
+        </form>
+    </div>
+</div>
