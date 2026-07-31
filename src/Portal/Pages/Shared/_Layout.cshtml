@@ -1,0 +1,57 @@
+@using Portal.Auth
+@using Portal.Components
+@inject IPortalUserAccessor Operator
+@{
+    var current = (ViewData["Surface"] as string) ?? Surface.Overview.Key;
+    var who = Operator.Current?.DisplayName ?? "";
+    var initials = string.Concat(who.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        .Take(2).Select(part => char.ToUpperInvariant(part[0])));
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] · Egress console</title>
+    <link rel="stylesheet" href="~/css/portal.css" />
+</head>
+@* hx-boost turns the tab bar's ordinary links into partial swaps while keeping them real routes,
+   so the console gets deep links and the back button — which the mockup's JS tab switching does
+   not. data-surface selects the per-surface background tint. *@
+<body hx-boost="true" data-surface="@current">
+    <header class="shell">
+        <div class="brand">
+            <div class="chip" aria-hidden="true">EG</div>
+            <div class="wordmark"><div>Egress</div><div>Proxy</div><div>Console</div></div>
+        </div>
+        <nav class="tabs" aria-label="Console surfaces">
+            <div class="tabgroup">
+                @foreach (var surface in Surface.All)
+                {
+                    <a class="tab" href="@surface.Path"
+                       aria-current="@(surface.Key == current ? "page" : null)"
+                       aria-selected="@(surface.Key == current ? "true" : "false")">@surface.Label</a>
+                }
+            </div>
+        </nav>
+        <div class="headerside">
+            <div class="whoami">
+                <div class="av" aria-hidden="true">@initials</div>
+                <div>
+                    <div class="who">@who</div>
+                    <div class="role">Platform team</div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        @RenderBody()
+    </main>
+
+    @* Vendored and pinned — no CDN in the trust path of a security reference implementation.
+       The version is in the filename so an upgrade cannot be served from a stale cache.
+       See wwwroot/lib/htmx/README.md for provenance and the upgrade procedure. *@
+    <script src="~/lib/htmx/htmx-2.0.10.min.js"></script>
+</body>
+</html>

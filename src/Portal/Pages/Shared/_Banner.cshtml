@@ -1,0 +1,11 @@
+@model Portal.Components.BannerModel
+@* The console explains itself in place. Several of its facts — netid attribution, what report
+   mode actually permits, where policy authority comes from — are exactly the things an operator
+   would otherwise get wrong, so they belong next to the data rather than in a manual.
+
+   Text only, encoded by Razor. A banner that accepted markup would be a rendering hole in the
+   one component whose whole job is to carry trusted explanatory copy. *@
+<div class="banner">
+    <span class="bico" aria-hidden="true">@Model.Icon</span>
+    <div>@Model.Text</div>
+</div>

@@ -40,6 +40,46 @@ param controlPlaneIdentityClientId string = ''
 @description('Principal id of the control-plane user-assigned identity, used for the ACR pull role assignment.')
 param controlPlaneIdentityPrincipalId string = ''
 
+@description('Deploy the read-only management console (Mode 3) into this managed environment.')
+param deployPortal bool = false
+
+@description('Container image for the management console.')
+param portalImage string = ''
+
+@description('Resource id of the portal user-assigned identity (created in the hub, alongside everything it reads).')
+param portalIdentityResourceId string = ''
+
+@description('Client id of the portal user-assigned identity.')
+param portalIdentityClientId string = ''
+
+@description('Principal id of the portal user-assigned identity, used for the ACR pull role assignment.')
+param portalIdentityPrincipalId string = ''
+
+@description('Source IP ranges permitted to reach the console. Empty means no network restriction.')
+param portalAllowedSourceIps array = []
+
+@description('Application (client) ID of the Entra app registration the console signs operators in with. Created out of band — an app registration is not an ARM resource. REQUIRED when deployPortal is true: without it the platform performs no authentication and the console would serve the whole egress posture to anyone who reaches it.')
+param portalAuthClientId string = ''
+
+@description('Client secret for the console\'s Entra app registration. Required alongside portalAuthClientId.')
+@secure()
+param portalAuthClientSecret string = ''
+
+@description('Hub resource group holding the proxy scale set, egress prefix, load balancer and workspace — the only scope the portal identity holds a role on.')
+param hubResourceGroupName string = ''
+
+@description('Log Analytics workspace GUID (not the ARM resource id) that the console queries EgressProxy_CL through.')
+param workspaceCustomerId string = ''
+
+@description('Proxy scale set name, for the console runtime surface.')
+param proxyVmssName string = ''
+
+@description('Egress public IP prefix name, for the console IP-pool panel.')
+param proxyPublicIpPrefixName string = ''
+
+@description('Proxy internal load balancer name, for the console health panels.')
+param proxyLoadBalancerName string = ''
+
 @description('Blob service endpoint holding the allowlist and ruleset blobs.')
 param storageServiceUrl string = ''
 
@@ -539,3 +579,205 @@ output sampleAppFqdn string = sampleApp.outputs.fqdn
 // Public entry point for the demo — the app's own ACA external ingress.
 output sampleAppUrl string = 'https://${sampleApp.outputs.fqdn}'
 output caeDefaultDomain string = managedEnvironment.outputs.defaultDomain
+
+// ============================================================================================
+// The management console (Mode 3, read-only)
+// ============================================================================================
+
+resource portalAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployPortal && containerRegistryName != '') {
+  name: guid(subscription().id, resourceGroup().name, containerRegistryName, 'portal-acr-pull')
+  scope: containerRegistry
+  properties: {
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalId: portalIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The console shares the spoke's managed environment for demo economy, like the control plane,
+// but it is platform infrastructure: its identity lives in the hub next to everything it reads,
+// and it is read-only in all three directions.
+//
+// INBOUND EXPOSURE. External ingress, and two things in front of it.
+//
+// First, the platform's built-in authentication (below) with unauthenticatedClientAction set to
+// RedirectToLoginPage, so an unauthenticated request never reaches the container at all — which
+// is also what makes the X-MS-CLIENT-PRINCIPAL headers the app reads trustworthy, since the auth
+// sidecar strips any client-supplied copy.
+//
+// Second, an optional source-IP restriction. It is optional because this is a reference
+// implementation that has to be runnable from a laptop; it is *present* because the console is an
+// admin surface for a security control rather than a sample workload, and it concentrates more
+// read power than anything else in the deployment. Internal-only ingress is the production
+// counterpart and is recorded as such in docs/production-hardening.md.
+module portal 'br/public:avm/res/app/container-app:0.22.0' = if (deployPortal) {
+  name: 'portal'
+  dependsOn: [
+    portalAcrPull
+  ]
+  params: {
+    registries: containerRegistryName == '' ? [] : [
+      {
+        server: '${containerRegistryName}.azurecr.io'
+        identity: portalIdentityResourceId
+      }
+    ]
+    name: '${namePrefix}-portal'
+    location: location
+    environmentResourceId: managedEnvironment.outputs.resourceId
+    secrets: portalAuthClientSecret == '' ? [] : [
+      {
+        name: 'portal-auth-client-secret'
+        value: portalAuthClientSecret
+      }
+    ]
+    ingressExternal: true
+    ingressTargetPort: 8080
+    ingressTransport: 'http'
+    ingressAllowInsecure: false
+    // Empty means unrestricted. A non-empty list is Allow-only, which Container Apps completes
+    // with an implicit deny — so naming one range restricts the console to that range.
+    ipSecurityRestrictions: [
+      for (range, index) in portalAllowedSourceIps: {
+        name: 'operators-${index}'
+        action: 'Allow'
+        ipAddressRange: range
+        description: 'Platform team source range permitted to reach the console.'
+      }
+    ]
+    managedIdentities: {
+      systemAssigned: false
+      userAssignedResourceIds: [
+        portalIdentityResourceId
+      ]
+    }
+    // Scale to zero between sessions: a console nobody is looking at should cost nothing. The
+    // cold start is a few seconds, which is acceptable for an operator tool and is not acceptable
+    // for the proxy — which is why the proxy is a VMSS and this is not.
+    scaleSettings: {
+      minReplicas: 0
+      maxReplicas: 1
+      cooldownPeriod: 900
+    }
+    containers: [
+      {
+        name: 'portal'
+        image: portalImage
+        resources: {
+          cpu: json('0.5')
+          memory: '1Gi'
+        }
+        env: [
+          {
+            name: 'ASPNETCORE_URLS'
+            value: 'http://+:8080'
+          }
+          {
+            // The console's own egress goes direct to the control plane, ARM, Log Analytics and
+            // the registry rather than through the proxy: an operator tool must not depend on the
+            // data plane whose health it is there to report.
+            name: 'NO_PROXY'
+            value: '169.254.169.254,localhost,${managedEnvironment.outputs.defaultDomain},.${managedEnvironment.outputs.defaultDomain},.monitor.azure.com,.applicationinsights.azure.com,.livediagnostics.monitor.azure.com,.loganalytics.io,.management.azure.com'
+          }
+          {
+            name: 'AZURE_CLIENT_ID'
+            value: portalIdentityClientId
+          }
+          {
+            name: 'CONTROL_PLANE_URL'
+            value: deployControlPlane ? 'https://${controlPlane!.outputs.fqdn}' : ''
+          }
+          {
+            // The console calls the control-plane API as ITSELF, with its own managed identity,
+            // never with the operator's token — a user token could not satisfy the API's
+            // iss/aud validation, and pass-through would pin the console to Entra forever.
+            name: 'CONTROL_PLANE_SCOPE'
+            value: '${expectAud}/.default'
+          }
+          {
+            name: 'LOG_ANALYTICS_WORKSPACE_ID'
+            value: workspaceCustomerId
+          }
+          {
+            name: 'HUB_SUBSCRIPTION_ID'
+            value: subscription().subscriptionId
+          }
+          {
+            name: 'HUB_RESOURCE_GROUP'
+            value: hubResourceGroupName
+          }
+          {
+            name: 'PROXY_SCALE_SET_NAME'
+            value: proxyVmssName
+          }
+          {
+            name: 'EGRESS_IP_PREFIX_NAME'
+            value: proxyPublicIpPrefixName
+          }
+          {
+            name: 'PROXY_LOAD_BALANCER_NAME'
+            value: proxyLoadBalancerName
+          }
+          {
+            name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+            value: appInsights.outputs.connectionString
+          }
+        ]
+      }
+    ]
+  }
+}
+
+output portalFqdn string = deployPortal ? portal!.outputs.fqdn : ''
+output portalUrl string = deployPortal ? 'https://${portal!.outputs.fqdn}' : ''
+
+// Container Apps' built-in authentication, in front of the container.
+//
+// This is what makes the console safe to expose: unauthenticatedClientAction is
+// RedirectToLoginPage, so an unauthenticated request is turned away at the platform edge and
+// never reaches the app. It is also what makes the X-MS-CLIENT-PRINCIPAL headers the app reads
+// trustworthy — the auth sidecar strips any client-supplied copy before forwarding.
+//
+// The app registration itself is created out of band, because an app registration is not an ARM
+// resource (scripts/deploy.sh does it with `az ad app create`).
+//
+// If portalAuthClientId is empty this resource is not created, and the console has no
+// authentication in front of it. That does NOT leave it open: the app's own SessionMiddleware
+// finds no principal, so every request is turned away and the console serves nothing. Broken
+// rather than exposed is the correct failure for an admin surface on a security control.
+resource portalAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (deployPortal && portalAuthClientId != '') {
+  name: '${namePrefix}-portal/current'
+  dependsOn: [
+    portal
+  ]
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          openIdIssuer: expectIss
+          clientId: portalAuthClientId
+          clientSecretSettingName: 'portal-auth-client-secret'
+        }
+        validation: {
+          allowedAudiences: [
+            'api://${portalAuthClientId}'
+          ]
+        }
+      }
+    }
+    login: {
+      preserveUrlFragmentsForLogins: true
+      tokenStore: {
+        enabled: true
+      }
+    }
+  }
+}

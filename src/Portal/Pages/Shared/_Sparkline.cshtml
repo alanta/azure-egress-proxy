@@ -1,0 +1,20 @@
+@model Portal.Components.ChartModel
+@* Server-rendered SVG. The mockups are hand-rolled SVG and ZEP's own MetricChart is too, so no
+   charting library is implied — which is what keeps npm out of the repo and unsafe-eval out of
+   the CSP. *@
+@if (Model.HasData)
+{
+    <svg viewBox="0 0 @Model.Width @Model.Height" width="100%" height="@Model.Height"
+         preserveAspectRatio="none" role="img" aria-label="@Model.Label">
+        <path d="@Model.AreaPath" fill="@Model.Colour" fill-opacity=".14"></path>
+        <path d="@Model.LinePath" fill="none" stroke="@Model.Colour" stroke-width="1.5"
+              stroke-linejoin="round"></path>
+        <circle cx="@Model.LastPoint.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                cy="@Model.LastPoint.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                r="2.6" fill="@Model.Colour"></circle>
+    </svg>
+}
+else
+{
+    <div class="note dim">No samples in this window.</div>
+}

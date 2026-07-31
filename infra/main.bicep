@@ -21,6 +21,22 @@ param deployControlPlane bool = false
 @description('Container image for the control-plane API. Required when deployControlPlane is true; must be pullable under the egress floor (see containerRegistryName).')
 param controlPlaneImage string = ''
 
+@description('Deploy the read-only management console (Mode 3). It is a backend-for-frontend: it holds Reader + Monitoring Reader on the hub resource group and queries the control plane, Log Analytics and ARM on the operator\'s behalf. It writes nothing, and the platform is fully functional without it. Requires deployControlPlane.')
+param deployPortal bool = false
+
+@description('Container image for the management console. Required when deployPortal is true; must be pullable under the egress floor (see containerRegistryName).')
+param portalImage string = ''
+
+@description('Source IP ranges (CIDR) permitted to reach the management console, e.g. the platform team\'s office egress. Empty means no network restriction — the console is still behind Entra sign-in, but it is an admin surface for a security control, so restricting it is the production posture (see docs/production-hardening.md).')
+param portalAllowedSourceIps array = []
+
+@description('Application (client) ID of the Entra app registration operators sign in to the console with. Created out of band by scripts/deploy.sh — an app registration is not an ARM resource. Required when deployPortal is true.')
+param portalAuthClientId string = ''
+
+@description('Client secret for the console\'s Entra app registration.')
+@secure()
+param portalAuthClientSecret string = ''
+
 @description('Tenant ID used for identity validation.')
 param tenantId string
 
@@ -126,6 +142,7 @@ module hub 'modules/hub.bicep' = {
     hubProxySubnetCidr: hubProxySubnetCidr
     proxyLoadBalancerPrivateIp: proxyLoadBalancerPrivateIp
     deployControlPlane: deployControlPlane
+    deployPortal: deployPortal
   }
   dependsOn: [
     hubRg
@@ -156,6 +173,19 @@ module spoke 'modules/spoke.bicep' = {
     allowlistContainerName: hub.outputs.allowlistContainerName
     jwksUrl: jwksUrl
     expectIss: expectIss
+    deployPortal: deployPortal
+    portalImage: portalImage
+    portalAllowedSourceIps: portalAllowedSourceIps
+    portalAuthClientId: portalAuthClientId
+    portalAuthClientSecret: portalAuthClientSecret
+    portalIdentityResourceId: hub.outputs.portalIdentityResourceId
+    portalIdentityClientId: hub.outputs.portalIdentityClientId
+    portalIdentityPrincipalId: hub.outputs.portalIdentityPrincipalId
+    hubResourceGroupName: hubResourceGroupName
+    workspaceCustomerId: hub.outputs.workspaceCustomerId
+    proxyVmssName: hub.outputs.proxyVmssName
+    proxyPublicIpPrefixName: hub.outputs.proxyPublicIpPrefixName
+    proxyLoadBalancerName: hub.outputs.proxyLoadBalancerName
   }
   dependsOn: [
     spokeRg
@@ -230,3 +260,4 @@ output sampleAppUrl string = spoke.outputs.sampleAppUrl
 output caeDefaultDomain string = spoke.outputs.caeDefaultDomain
 output rulesetsBlobName string = hub.outputs.rulesetsBlobName
 output controlPlaneUrl string = spoke.outputs.controlPlaneUrl
+output portalUrl string = spoke.outputs.portalUrl

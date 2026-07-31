@@ -15,28 +15,28 @@ browser — it is the visual specification for every surface.
 
 ### 1. Control-plane read extensions
 
-- [ ] 1.1 Add `GET /grants` returning the platform-managed grants; auth-only, no verb, read-only
-- [ ] 1.2 Add `GET /fallback` returning the fallback block; auth-only, no verb; report an absent or empty fallback as deny-all
-- [ ] 1.3 Surface the state document's last-modified time and ETag on control-plane read responses
-- [ ] 1.4 Tests: both endpoints reachable with any valid token and no grants; neither writable; recency advances after a ruleset write
-- [ ] 1.5 Update `docs/control-plane.md` § API surface with both endpoints and the recency semantics
+- [x] 1.1 Add `GET /grants` returning the platform-managed grants; auth-only, no verb, read-only
+- [x] 1.2 Add `GET /fallback` returning the fallback block; auth-only, no verb; report an absent or empty fallback as deny-all
+- [x] 1.3 Surface the state document's last-modified time and ETag on control-plane read responses
+- [x] 1.4 Tests: both endpoints reachable with any valid token and no grants; neither writable; recency advances after a ruleset write
+- [x] 1.5 Update `docs/control-plane.md` § API surface with both endpoints and the recency semantics
 
 ### 2. Portal service scaffold
 
-- [ ] 2.1 Create `src/Portal/` as an ASP.NET Core Razor Pages app — its own process, its own image, the Dockerfile shape `src/ControlPlane/` uses
-- [ ] 2.2 Vendor htmx as a single pinned file served by the app; no npm, no build step, no CDN
-- [ ] 2.3 Add user authentication behind an abstraction, so the identity provider can change without touching the control-plane client
-- [ ] 2.4 Return `401` + `HX-Redirect` for expired sessions on `HX-Request` calls, so a login page can never render into a swap target
-- [ ] 2.5 Set a CSP with no `unsafe-eval`, and forbid `hx-vals='js:…'`, `hx-on:*`, and eval-based extensions in review
-- [ ] 2.6 Assert in tests that the portal issues no `PUT` or `DELETE` against the control-plane API
+- [x] 2.1 Create `src/Portal/` as an ASP.NET Core Razor Pages app — its own process, its own image, the Dockerfile shape `src/ControlPlane/` uses
+- [x] 2.2 Vendor htmx as a single pinned file served by the app; no npm, no build step, no CDN
+- [x] 2.3 Add user authentication behind an abstraction, so the identity provider can change without touching the control-plane client
+- [x] 2.4 Return `401` + `HX-Redirect` for expired sessions on `HX-Request` calls, so a login page can never render into a swap target
+- [x] 2.5 Set a CSP with no `unsafe-eval`, and forbid `hx-vals='js:…'`, `hx-on:*`, and eval-based extensions in review
+- [x] 2.6 Assert in tests that the portal issues no `PUT` or `DELETE` against the control-plane API
 
 ### 3. Data clients — **contract for wave 2**
 
-- [ ] 3.1 Control-plane client calling the API with the portal's own managed identity; typed DTOs for rulesets, grants, fallback, recency, and the `:check` diff
-- [ ] 3.2 Log Analytics client with bounded default time windows; typed DTOs for decisions, denials, auth failures, challenge conversion, and report-mode findings
-- [ ] 3.3 ARM + Azure Monitor client; typed DTOs for scale-set capacity and instance view, public-IP-prefix capacity and consumption, and metric series
-- [ ] 3.4 Server-side response cache in front of all three, sized so a 60-second poll per operator does not reach Azure on every tick
-- [ ] 3.5 Write down the DTO set and the caching rules as the wave-2 contract
+- [x] 3.1 Control-plane client calling the API with the portal's own managed identity; typed DTOs for rulesets, grants, fallback, recency, and the `:check` diff
+- [x] 3.2 Log Analytics client with bounded default time windows; typed DTOs for decisions, denials, auth failures, challenge conversion, and report-mode findings
+- [x] 3.3 ARM + Azure Monitor client; typed DTOs for scale-set capacity and instance view, public-IP-prefix capacity and consumption, and metric series
+- [x] 3.4 Server-side response cache in front of all three, sized so a 60-second poll per operator does not reach Azure on every tick
+- [x] 3.5 Write down the DTO set and the caching rules as the wave-2 contract
 
 ### 4. Design system — **contract for wave 2**
 
@@ -44,32 +44,32 @@ Read `design.md` § D9 first. The mockups at `mockups/portal.html` are the visua
 open them in a browser. The styling they inherit comes from the ZEP project at
 `~/Projects/Zure/zep`, **outside this repository**.
 
-- [ ] 4.1 Port the CSS from `mockups/portal.html` into the portal as the stylesheet: tokens, glass card, per-surface shell tints, semantic allow/report/open
-- [ ] 4.2 Embed Geist and Geist Mono as the mockups do, with the SIL OFL notice retained
-- [ ] 4.3 Build the shared Razor partials the mockups imply: card, card header, stat, pill, data table, banner, host list, freshness stamp, sparkline, metric chart
-- [ ] 4.4 Establish the surface layout: sticky header, pill tab bar as real routes under `hx-boost`, per-surface background tint
-- [ ] 4.5 Write down the partial set and its parameters as the wave-2 contract
+- [x] 4.1 Port the CSS from `mockups/portal.html` into the portal as the stylesheet: tokens, glass card, per-surface shell tints, semantic allow/report/open
+- [x] 4.2 Embed Geist and Geist Mono as the mockups do, with the SIL OFL notice retained
+- [x] 4.3 Build the shared Razor partials the mockups imply: card, card header, stat, pill, data table, banner, host list, freshness stamp, sparkline, metric chart
+- [x] 4.4 Establish the surface layout: sticky header, pill tab bar as real routes under `hx-boost`, per-surface background tint
+- [x] 4.5 Write down the partial set and its parameters as the wave-2 contract
 
 ### 5. Vertical slice — Overview
 
 Built in wave 1 deliberately: it exercises all three data sources, so if it works the remaining
 surfaces are repetition rather than risk.
 
-- [ ] 5.1 Posture summary: ruleset count, enforce/report/open split, fallback state
-- [ ] 5.2 Configuration last-modified, labelled as document-scoped
-- [ ] 5.3 Traffic summary: denials, authentication failures, unconverted challenges
-- [ ] 5.4 Runtime summary: nodes, egress IP pool, throughput
-- [ ] 5.5 "Worth a look" panel — observations, explicitly not alerts
-- [ ] 5.6 Metric panels refreshing on `hx-trigger="every 60s"` against the cache, with freshness stamped
+- [x] 5.1 Posture summary: ruleset count, enforce/report/open split, fallback state
+- [x] 5.2 Configuration last-modified, labelled as document-scoped
+- [x] 5.3 Traffic summary: denials, authentication failures, unconverted challenges
+- [x] 5.4 Runtime summary: nodes, egress IP pool, throughput
+- [x] 5.5 "Worth a look" panel — observations, explicitly not alerts
+- [x] 5.6 Metric panels refreshing on `hx-trigger="every 60s"` against the cache, with freshness stamped
 
 ### 6. Infrastructure
 
-- [ ] 6.1 Add the `deployPortal` parameter, threaded through hub and spoke as `deployControlPlane` is
-- [ ] 6.2 Create the portal user-assigned identity; assign `Reader` + `Monitoring Reader` on the hub resource group — and no write role anywhere
-- [ ] 6.3 Deploy the portal container app; grant `AcrPull`
-- [ ] 6.4 Decide and implement the portal's inbound exposure — it is an admin surface for a security control, not a sample workload
-- [ ] 6.5 Add the portal image to the release build and to `scripts/deploy.sh`
-- [ ] 6.6 Wire the portal into `src/AppHost/` so the console runs against Azurite, the mock IdP, and the local control plane
+- [x] 6.1 Add the `deployPortal` parameter, threaded through hub and spoke as `deployControlPlane` is
+- [x] 6.2 Create the portal user-assigned identity; assign `Reader` + `Monitoring Reader` on the hub resource group — and no write role anywhere
+- [x] 6.3 Deploy the portal container app; grant `AcrPull`
+- [x] 6.4 Decide and implement the portal's inbound exposure — it is an admin surface for a security control, not a sample workload
+- [x] 6.5 Add the portal image to the release build and to `scripts/deploy.sh`
+- [x] 6.6 Wire the portal into `src/AppHost/` so the console runs against Azurite, the mock IdP, and the local control plane
 
 ---
 

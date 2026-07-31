@@ -1,0 +1,17 @@
+@model Portal.Components.HostListModel
+<div class="hostlist">
+    @foreach (var host in Model.Hosts)
+    {
+        <span class="host">@host</span>
+    }
+    @* A push is a full replace, so a removal is as much of the change as an addition and gets
+       the same visual weight — struck through in the deny ramp rather than simply omitted. *@
+    @foreach (var host in Model.Added ?? [])
+    {
+        <span class="host add">+ @host</span>
+    }
+    @foreach (var host in Model.Removed ?? [])
+    {
+        <span class="host rm">@host</span>
+    }
+</div>

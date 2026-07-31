@@ -1,0 +1,45 @@
+@model Portal.Pages.IndexModel
+@* Policy is the one panel that does not poll. The state document changes when a pipeline pushes,
+   which is not on a 60-second rhythm, and every read carries its own last-modified stamp. *@
+<console-card eyebrow="Policy" title="Posture" icon="📋">
+    @if (Model.Policy is not { } policy)
+    {
+        <div class="note dim">The control plane could not be read.</div>
+    }
+    else
+    {
+        <div class="stats">
+            <partial name="_Stat" model="@(new StatModel(policy.Rulesets.Count.ToString(), "rulesets"))" />
+            <partial name="_Stat" model="@(new StatModel(
+                policy.CountWith(RulesetAction.Enforce).ToString(), "enforcing", StatTone.Good))" />
+            <partial name="_Stat" model="@(new StatModel(
+                policy.CountWith(RulesetAction.Report).ToString(), "reporting", StatTone.Warn))" />
+            <partial name="_Stat" model="@(new StatModel(
+                policy.CountWith(RulesetAction.Open).ToString(), "open", StatTone.Bad))" />
+        </div>
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
+            <dl class="kv">
+                @* Traffic matching no ruleset — written from the operator's side rather than
+                   called "the fallback block". A configuration view that omits the floor is a
+                   misleading one, so it sits here rather than only on the Platform surface. *@
+                <dt>Unmatched traffic</dt>
+                <dd><partial name="_Pill" model="@PillModel.For(policy.Fallback)" /></dd>
+
+                <dt>Config changed</dt>
+                <dd>
+                    @if (policy.Recency.LastModified is { } modified)
+                    {
+                        @modified.ToLocalTime().ToString("d MMM yyyy, HH:mm")
+                        @* Document-scoped, and labelled as such: any ruleset write moves it, so
+                           it cannot answer "when did THIS ruleset change?". Deferred to #33. *@
+                        <span class="fainter"> · whole document</span>
+                    }
+                    else
+                    {
+                        <span class="dim">no state written yet</span>
+                    }
+                </dd>
+            </dl>
+        </div>
+    }
+</console-card>

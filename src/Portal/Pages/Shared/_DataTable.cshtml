@@ -1,0 +1,35 @@
+@model Portal.Components.TableModel
+@* The list-of-rows shape every surface needs. A surface wanting richer cells — a pill in a
+   column, a row that swaps a detail panel on hx-get — writes its table directly using these same
+   classes, rather than this model growing until it can express arbitrary markup. *@
+<div class="tablewrap@(Model.Scroll ? " scroll" : "")">
+    <table>
+        <thead>
+            <tr>
+                @foreach (var column in Model.Columns)
+                {
+                    <th class="@(column.Numeric ? "num" : "")">@column.Header</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @if (Model.Rows.Count == 0)
+            {
+                <tr>
+                    <td class="dim" colspan="@Model.Columns.Count">
+                        @(Model.EmptyMessage ?? "Nothing in this window.")
+                    </td>
+                </tr>
+            }
+            @foreach (var row in Model.Rows)
+            {
+                <tr>
+                    @foreach (var cell in row)
+                    {
+                        <td class="@cell.CssClass">@cell.Text</td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>

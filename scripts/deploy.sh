@@ -39,6 +39,19 @@ sample_image_source="${SAMPLE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/sa
 deploy_control_plane="${DEPLOY_CONTROL_PLANE:-false}"
 control_plane_image="${CONTROL_PLANE_IMAGE:-}"
 control_plane_image_source="${CONTROL_PLANE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/control-plane:latest}"
+# Mode 3 (read-only management console) is opt-in on top of Mode 2: it reads the control-plane
+# API, so DEPLOY_PORTAL=true without DEPLOY_CONTROL_PLANE=true is rejected below. Its image is
+# imported into the demo ACR like the others (GHCR is off the egress floor).
+#
+# PORTAL_ALLOWED_SOURCE_IPS is a comma-separated CIDR list, e.g. "203.0.113.0/24". Empty means no
+# network restriction — the console is still behind Entra sign-in, but it is an admin surface for
+# a security control, so restricting it is the production posture.
+deploy_portal="${DEPLOY_PORTAL:-false}"
+portal_image="${PORTAL_IMAGE:-}"
+portal_image_source="${PORTAL_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/portal:latest}"
+portal_allowed_source_ips="${PORTAL_ALLOWED_SOURCE_IPS:-}"
+# The console signs operators in through an Entra app registration, which is not an ARM resource
+# and so cannot be created by the template. Left unset, deploy.sh creates one (see below).
 acr_name="${ACR_NAME:-${name_prefix}acr$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
 # Binary delivery. The VM fetches the proxy binary from PROXY_BINARY_URL at boot via
 # a plain (unauthenticated) curl, so it MUST be an http(s):// URL reachable from the
@@ -201,6 +214,18 @@ if [[ "$deploy_control_plane" != "true" && "$deploy_control_plane" != "false" ]]
   exit 1
 fi
 
+if [[ "$deploy_portal" != "true" && "$deploy_portal" != "false" ]]; then
+  echo "DEPLOY_PORTAL must be 'true' or 'false' (got '$deploy_portal')." >&2
+  exit 1
+fi
+
+# The console reads policy through the control-plane API and has no other route to it. Deploying
+# it without Mode 2 would produce a console whose policy surfaces are permanently empty.
+if [[ "$deploy_portal" == "true" && "$deploy_control_plane" != "true" ]]; then
+  echo "DEPLOY_PORTAL=true requires DEPLOY_CONTROL_PLANE=true: the console reads policy through the control-plane API." >&2
+  exit 1
+fi
+
 step "Setting up workload identity (setup-identity.sh)"
 "$repo_root/scripts/setup-identity.sh"
 
@@ -294,6 +319,35 @@ if [[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]]; then
   control_plane_image="$(import_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
 fi
 
+# Mode 3.
+if [[ "$deploy_portal" == "true" && -z "$portal_image" ]]; then
+  step "Preparing management-console image in a private ACR"
+  container_registry_name="$acr_name"
+  ensure_demo_acr
+  portal_image="$(import_image "$portal_image_source" portal src/Portal/Dockerfile)"
+fi
+
+# The console's sign-in app registration. Created here rather than in Bicep because an Entra app
+# registration is not an ARM resource. Idempotent: an existing registration with this display name
+# is reused, and a fresh client secret is minted for this deployment.
+portal_auth_client_id="${PORTAL_AUTH_CLIENT_ID:-}"
+portal_auth_client_secret="${PORTAL_AUTH_CLIENT_SECRET:-}"
+
+if [[ "$deploy_portal" == "true" && -z "$portal_auth_client_id" ]]; then
+  step "Preparing the console's Entra app registration"
+  portal_app_name="${name_prefix}-portal-console"
+  portal_auth_client_id="$(az ad app list --display-name "$portal_app_name" --query "[0].appId" -o tsv 2>/dev/null || true)"
+
+  if [[ -z "$portal_auth_client_id" ]]; then
+    portal_auth_client_id="$(az ad app create --display-name "$portal_app_name" --sign-in-audience AzureADMyOrg --query appId -o tsv)"
+    info "Created app registration $portal_app_name ($portal_auth_client_id)"
+  else
+    info "Reusing app registration $portal_app_name ($portal_auth_client_id)"
+  fi
+
+  portal_auth_client_secret="$(az ad app credential reset --id "$portal_auth_client_id" --display-name "deploy-$(date +%Y%m%d%H%M%S)" --query password -o tsv)"
+fi
+
 read_json() {
   local key="$1"
   python3 - "$identity_file" "$key" <<'PY'
@@ -308,6 +362,14 @@ import json,sys
 pairs=sys.argv[1].split()
 print(json.dumps(dict(p.split("=",1) for p in pairs)))
 PY
+)"
+
+# az takes a Bicep array parameter as JSON on the command line. An empty list means no network
+# restriction, which is the demo default; a non-empty one restricts the console to those ranges.
+portal_allowed_source_ips_json="$(python3 - "$portal_allowed_source_ips" <<'PYEOF'
+import json, sys
+print(json.dumps([r.strip() for r in sys.argv[1].split(",") if r.strip()]))
+PYEOF
 )"
 
 step "Reading identity config from $identity_file"
@@ -339,7 +401,12 @@ az deployment sub create \
     proxyBinarySha256="$proxy_binary_sha256" \
     vmAdminPublicKey="$vm_admin_public_key" \
     deployControlPlane="$deploy_control_plane" \
-    controlPlaneImage="$control_plane_image"
+    controlPlaneImage="$control_plane_image" \
+    deployPortal="$deploy_portal" \
+    portalImage="$portal_image" \
+    portalAllowedSourceIps="$portal_allowed_source_ips_json" \
+    portalAuthClientId="$portal_auth_client_id" \
+    portalAuthClientSecret="$portal_auth_client_secret"
 
 step "Reading deployment outputs"
 deployment_output_json="$(az deployment sub show --name "$deployment_name" --query properties.outputs -o json)"
@@ -443,7 +510,35 @@ PY
     --only-show-errors >/dev/null
 fi
 
+portal_url=""
+if [[ "$deploy_portal" == "true" ]]; then
+  portal_url="$(python3 - "$deployment_output_json" <<'PYEOF'
+import json, sys
+doc = json.loads(sys.argv[1])
+print(doc.get("portalUrl", {}).get("value", ""))
+PYEOF
+)"
+
+  # The sign-in callback can only be registered now: it is derived from the container app's FQDN,
+  # which the deployment just assigned. Without it Entra refuses the redirect and sign-in fails
+  # with AADSTS50011 rather than with anything that points at the cause.
+  if [[ -n "$portal_url" && -n "$portal_auth_client_id" ]]; then
+    step "Registering the console's sign-in redirect URI"
+    az ad app update \
+      --id "$portal_auth_client_id" \
+      --web-redirect-uris "${portal_url}/.auth/login/aad/callback" \
+      --only-show-errors
+  fi
+fi
+
 log "Deployment complete"
 echo "Sample app URL: $app_url"
 [ -n "$control_plane_url" ] && echo "Control plane URL: $control_plane_url"
+if [ -n "$portal_url" ]; then
+  echo "Management console: $portal_url"
+  # Nothing in the deployment grants anyone access: the app registration exists, but who may sign
+  # in to it is a decision for the platform team, not for a deploy script.
+  echo "  Sign-in is restricted to your tenant. Assign the platform team to the"
+  echo "  '${name_prefix}-portal-console' enterprise application to let them in."
+fi
 echo "Demo command: scripts/demo.sh \"$app_url\""

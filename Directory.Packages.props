@@ -10,6 +10,12 @@
     <PackageVersion Include="Azure.Core" Version="1.60.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
+    <!-- The portal's three read-only Azure clients: Log Analytics (KQL) and Azure Monitor
+         metrics via Azure.Monitor.Query, VMSS capacity and instance view via
+         ResourceManager.Compute, public-IP-prefix consumption via ResourceManager.Network. -->
+    <PackageVersion Include="Azure.Monitor.Query" Version="1.7.1" />
+    <PackageVersion Include="Azure.ResourceManager.Compute" Version="1.16.0" />
+    <PackageVersion Include="Azure.ResourceManager.Network" Version="1.16.1" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
