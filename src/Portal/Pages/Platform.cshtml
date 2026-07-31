@@ -1,0 +1,15 @@
+@page
+@model Portal.Pages.PlatformModel
+
+@* Copy written from the operator's side (design.md D9): "who may change policy", not "grants";
+   "traffic matching no ruleset", not "the fallback block". The underlying identifiers still appear
+   where they ARE the identifier. *@
+<partial name="_PageHead" model="@(new PageHeadModel(
+    "Platform",
+    "Who may change policy, and what happens to traffic that matches no ruleset.",
+    Model.Stamp))" />
+
+<div class="grid g21">
+    <partial name="_PlatformAuthority" model="Model" />
+    <partial name="_PlatformBaseline" model="Model" />
+</div>

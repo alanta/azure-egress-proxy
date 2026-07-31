@@ -1,0 +1,74 @@
+@model Portal.Pages.PlatformModel
+@* The grants table is written out rather than going through _DataTable: the verbs column is a row
+   of pills, and the contract says a surface needing a richer cell writes the table directly with
+   the same classes instead of growing TableModel until it can express arbitrary markup. *@
+<console-card eyebrow="Authority" title="Who may change policy" icon="🔏">
+    @if (Model.Policy is not { } policy)
+    {
+        <div class="note dim">The control plane could not be read.</div>
+    }
+    else
+    {
+        <div class="tablewrap">
+            <table>
+                <thead>
+                    <tr><th>Identity</th><th>May</th><th>Limited to</th></tr>
+                </thead>
+                <tbody>
+                    @if (policy.Grants.Count == 0)
+                    {
+                        @* Not the same statement as an empty allowlist. With no grants the API
+                           refuses every write until the platform team adds one by hand — the
+                           documented state a fresh deployment starts in, so it is described rather
+                           than left as a blank table that reads as a failed read. *@
+                        <tr>
+                            <td class="dim" colspan="3">
+                                No identity holds a grant, so every write to the control plane is
+                                refused until the platform team adds one.
+                            </td>
+                        </tr>
+                    }
+                    @foreach (var grant in policy.Grants)
+                    {
+                        <tr>
+                            <td class="mono">
+                                @grant.Identity
+                                @if (grant.Note is { Length: > 0 } note)
+                                {
+                                    <div class="fainter">@note</div>
+                                }
+                            </td>
+                            <td>
+                                @if (grant.Verbs.Count == 0)
+                                {
+                                    <span class="dim">nothing</span>
+                                }
+                                @foreach (var verb in grant.Verbs)
+                                {
+                                    <partial name="_Pill" model="@(new PillModel(PlatformModel.DescribeVerb(verb)))" />
+                                }
+                            </td>
+                            @* An unscoped grant reaches EVERY ruleset. Rendering that as an empty
+                               scope would understate authority — the one direction this console
+                               must not err in — so it is stated, and in body ink rather than the
+                               dim treatment a narrow scope gets. *@
+                            <td class="@(PlatformModel.ScopeIsNamed(grant) ? "mono dim" : "")">
+                                @PlatformModel.DescribeScope(grant)
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @* 10.2. The point of the surface: this is a statement of record, not an admin screen. *@
+        <div style="margin-top:16px">
+            <partial name="_Banner" model="@(new BannerModel("🔒",
+                "Authority is granted outside this portal. The control-plane API has no write path "
+                + "for these entries at all — the platform team edits them directly in the state "
+                + "document, and every write the API does make copies this section through "
+                + "untouched, so the control plane can never widen its own powers. This console "
+                + "only reads them."))" />
+        </div>
+    }
+</console-card>
