@@ -1,0 +1,212 @@
+@model Portal.Pages.LookupModel
+@* The whole answer, and the only thing the live search swaps. One partial rather than two because
+   a query is one question: an identity resolves, a hostname reverses, and which card appears is
+   part of what the surface is telling the operator. *@
+@if (Model.Policy is not { } policy)
+{
+    <console-card eyebrow="Lookup" title="Policy could not be read" icon="⚠️">
+        <div class="note dim">
+            The control plane could not be read, so nothing can be resolved. This is not the same
+            as a subject matching no ruleset.
+        </div>
+    </console-card>
+}
+else if (Model.Kind == LookupKind.Empty)
+{
+    <console-card eyebrow="Lookup" title="Nothing to resolve yet" icon="🎯">
+        <div class="note dim">
+            A managed-identity client ID resolves to the ruleset that governs it, a source CIDR to
+            the ruleset that covers the address, and a hostname to every ruleset that reaches it.
+        </div>
+    </console-card>
+}
+else if (Model.Resolution is { } resolution)
+{
+    <div class="card">
+        <div class="cardhead">
+            <div class="ico" aria-hidden="true">🎯</div>
+            <div>
+                <div class="eyebrow">Resolved</div>
+                @* The fallback is not a ruleset, so the title says so rather than naming one.
+                   "No ruleset governs this" must never read as "no policy applies". *@
+                <div class="title">
+                    @(resolution.Ruleset is { } governing
+                        ? $"Governed by {governing.Name}"
+                        : "No ruleset governs this — the fallback does")
+                </div>
+            </div>
+        </div>
+
+        <dl class="kv" style="margin-bottom:16px">
+            <dt>Query</dt>
+            <dd class="mono">@Model.Normalized</dd>
+
+            @* Which kind of match was made, always. An appid is a validated token claim; a netid is
+               a source address, and a source address is not an identity. *@
+            <dt>Match</dt>
+            <dd>@resolution.Match</dd>
+
+            @if (resolution.Ruleset is { } matched)
+            {
+                <dt>Action</dt>
+                <dd><partial name="_Pill" model="@PillModel.For(matched.Action)" /></dd>
+
+                @if (matched.Owner is { Length: > 0 } owner)
+                {
+                    <dt>Owner</dt>
+                    <dd>@owner</dd>
+                }
+
+                <dt>Shares rules with</dt>
+                <dd class="mono">
+                    @(resolution.SharesWith.Count == 0
+                        ? "nothing — it is the only subject on this ruleset"
+                        : string.Join(", ", resolution.SharesWith))
+                </dd>
+            }
+            else
+            {
+                @* The floor, stated rather than inferred from an empty list. *@
+                <dt>Unmatched traffic</dt>
+                <dd><partial name="_Pill" model="@PillModel.For(policy.Fallback)" /></dd>
+            }
+        </dl>
+
+        <div class="eyebrow" style="margin-bottom:8px">May reach</div>
+        @if (resolution.Ruleset is { } reachable)
+        {
+            <partial name="_HostList" model="@(new HostListModel(reachable.AllowedHosts))" />
+        }
+        else if (policy.Fallback.DenyAll)
+        {
+            <div class="note dim">Nothing. The fallback is deny-all, so this subject reaches no host.</div>
+        }
+        else
+        {
+            <partial name="_HostList" model="@(new HostListModel(policy.Fallback.AllowedHosts))" />
+        }
+
+        @* What the action actually does to everything else — the sentence the mockup ends on, and
+           the one an operator gets wrong most often for report and open. *@
+        <p class="note" style="margin:14px 0 0">
+            @switch (resolution.Ruleset?.Action)
+            {
+                case RulesetAction.Open:
+                    <text>
+                        The action is <strong>open</strong>: every other host is reachable too. The
+                        list above is not being consulted.
+                    </text>
+                    break;
+                case RulesetAction.Report:
+                    <text>
+                        The action is <strong>report</strong>: other hosts are reached as well, and
+                        logged with <span class="mono">EnforceWouldDeny</span> rather than refused.
+                    </text>
+                    break;
+                case RulesetAction.Enforce:
+                    <text>Everything else is refused and logged.</text>
+                    break;
+                default:
+                    <text>
+                        This subject is on no ruleset, so the platform-owned fallback applies to it.
+                        Everything outside it is refused and logged.
+                    </text>
+                    break;
+            }
+        </p>
+
+        @if (resolution.Kind == LookupKind.Netid)
+        {
+            <div style="margin-top:16px">
+                <partial name="_Banner" model="@(new BannerModel("🛰️",
+                    "This match is by source address, not by a validated token claim. A source "
+                    + "address is not an identity — on VNet-integrated hosts one workload's traffic "
+                    + "arrives from several rotating addresses, and any workload on the subnet gets "
+                    + "these rules."))" />
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="card">
+        <div class="cardhead">
+            <div class="ico" aria-hidden="true">🌐</div>
+            <div>
+                <div class="eyebrow">Reverse lookup</div>
+                <div class="title">Who can reach @Model.Normalized?</div>
+            </div>
+        </div>
+
+        @* Written directly rather than through _DataTable: the action column is a pill, which
+           TableModel deliberately cannot express (README § Design system). Same classes. *@
+        <div class="tablewrap@(Model.Reverse.Count > 8 ? " scroll" : "")">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ruleset</th>
+                        <th>Subjects</th>
+                        <th>Reaches it because</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Model.Reverse.Count == 0)
+                    {
+                        <tr>
+                            <td class="dim" colspan="4">No ruleset reaches this host.</td>
+                        </tr>
+                    }
+                    @foreach (var match in Model.Reverse)
+                    {
+                        <tr>
+                            <td class="name">@match.Ruleset.Name</td>
+                            <td class="mono dim">@match.Subjects</td>
+                            <td class="dim">@match.Why</td>
+                            <td><partial name="_Pill" model="@PillModel.For(match.Ruleset.Action)" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @{
+            var reachAnyway = Model.Reverse
+                .Where(m => m.Reason != ReverseReason.Listed)
+                .Select(m => m.Ruleset.Name)
+                .ToList();
+        }
+        @if (reachAnyway.Count > 0)
+        {
+            @* The trap this table exists to avoid: an open ruleset is in the list because it
+               reaches everything, and a report ruleset because it refuses nothing. Listing either
+               as though it had been granted this host would overstate how deliberate the reach is,
+               and understating who can reach a host is the failure a security console cannot have. *@
+            <div style="margin-top:16px">
+                <partial name="_Banner" model="@(new BannerModel("ℹ️",
+                    $"{string.Join(", ", reachAnyway)} {(reachAnyway.Count == 1 ? "is" : "are")} listed "
+                    + "for the action, not for the host. An open ruleset reaches every host, and a "
+                    + "report ruleset reaches off-list hosts and logs them instead of refusing them."))" />
+            </div>
+        }
+
+        <div style="margin-top:16px">
+            <partial name="_Banner" model="@(new BannerModel(
+                Model.FallbackReaches ? "🚧" : "🧱",
+                Model.FallbackReaches
+                    ? "Traffic matching no ruleset also reaches this host: it is on the fallback."
+                    : (policy.Fallback.DenyAll
+                        ? "Traffic matching no ruleset cannot reach it: the fallback is deny-all."
+                        : "Traffic matching no ruleset cannot reach it — the fallback does not list it.")))" />
+        </div>
+    </div>
+}
+
+@if (Model.Policy is { } read)
+{
+    @* The answer is only as current as the policy read behind it, and that read is cached — so the
+       stamp travels with the data rather than being restamped as "now" on every keystroke. *@
+    <div style="margin-top:12px">
+        <partial name="_Freshness" model="@(FreshnessModel.From(("Policy read", read.Freshness)))" />
+    </div>
+}
