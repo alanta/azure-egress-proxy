@@ -100,6 +100,22 @@ Authorization: Bearer {{stranger}}
 GET {{api}}/rulesets/does-not-exist
 Authorization: Bearer {{stranger}}
 
+### 2d. Who may change policy. Platform-owned and edited out of band — readable here, never
+# writable through the API, which is what stops the write path widening its own authority.
+GET {{api}}/grants
+Authorization: Bearer {{stranger}}
+
+### 2e. What sources matching NO ruleset may reach. Absent or empty -> "deny_all": true.
+# A view of the configuration that omits the floor would be a misleading one.
+GET {{api}}/fallback
+Authorization: Bearer {{stranger}}
+
+### 2f. Every read stamps Last-Modified and ETag from the state blob it was served from.
+# Document-scoped: any ruleset write below moves it for ALL of these reads, including the two
+# above that the write did not touch. Re-send after §6 to watch it advance.
+GET {{api}}/rulesets
+Authorization: Bearer {{stranger}}
+
 
 # ==============================================================================================
 # The loop: onboard -> check -> promote -> offboard

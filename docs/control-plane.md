@@ -200,6 +200,8 @@ for rollback.
 |---|---|---|
 | `GET /rulesets` | none (auth only) | list all rulesets (transparency) |
 | `GET /rulesets/{name}` | none (auth only) | read one ruleset |
+| `GET /grants` | none (auth only) | read the platform-managed grants — *who may change policy* |
+| `GET /fallback` | none (auth only) | read the fallback block — *what unmatched sources may reach*; absent or empty is reported as `deny_all` |
 | `PUT /rulesets/{name}` (absent) | `onboard` | create it, set subjects, TOFU ownership; `report` if no action given |
 | `PUT /rulesets/{name}` (exists) | `update` / owner (+ `bind` if subjects change) | **full replace** of content; changing subjects additionally needs `bind`; changing acl rejected |
 | `POST /rulesets/{name}:check` | none (auth only) | dry-run: validate, return the same diff shape as a write, no write |
@@ -229,6 +231,20 @@ frozen `acl` · `404` unknown ruleset ·
 - **`PUT` is a full replace (desired-state).** A team keeps a rules file per environment in its
   repo; the pipeline pushes that file, so the ruleset always matches the repo and a host absent
   from the push is removed. Removals are audited, and `:check` surfaces them before a push.
+- **`grants` and `fallback` are readable, never writable.** Both live in the state document and had
+  no endpoint until the management console needed them. They are separate resources rather than one
+  `GET /platform` because they answer different questions for different audiences, and each can gain
+  filtering or pagination without versioning the other. Both are auth-only and consult no verb, like
+  the other reads. There is deliberately no write counterpart: `grants` is platform-owned and edited
+  out of band, and every write path copies both sections through untouched — which is what keeps the
+  write path from widening the authority that authorized it.
+- **Reads report state recency.** Every read stamps `Last-Modified` and `ETag` from the state blob it
+  was served from, so a caller can answer *"when did the configuration last change?"* without reading
+  the blob directly. This is **document-scoped**: any ruleset write moves it for *every* read,
+  including `GET /grants` and `GET /fallback`, which that write did not touch. It therefore cannot
+  answer *"when did **this** ruleset change?"* — that needs a per-ruleset stamp the model does not
+  carry, and is deferred to [#33](https://github.com/alanta/azure-egress-proxy/issues/33). The
+  headers describe the read; the API implements no conditional requests, so neither gates it.
 - **Concurrency.** ETag `If-Match` on the state blob; the whole read-modify-write is wrapped in
   a bounded retry (re-read + re-splice on 412), so concurrent writes to *different* rulesets
   don't collide. Sustained contention on the *same* ruleset surfaces as `409`.
@@ -243,6 +259,12 @@ API=http://localhost:5199        # or https://<control-plane>.<region>.azurecont
 
 # See the whole posture (any valid token; no verb needed)
 curl -s -H "Authorization: Bearer $TOKEN" $API/rulesets
+
+# ...and the platform-owned halves of it: who may change policy, and the floor everything
+# unmatched lands on. -D- shows the Last-Modified/ETag stamp every read carries.
+curl -s -D- -H "Authorization: Bearer $TOKEN" $API/grants
+curl -s -H "Authorization: Bearer $TOKEN" $API/fallback
+# -> {"allowed_hosts":[],"deny_all":true}
 
 # Onboard — declares subjects. No action given, so the on-ramp default applies.
 # (Pass "action":"enforce" here instead and it is honoured: report is a default, not a gate.)

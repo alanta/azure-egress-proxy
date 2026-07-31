@@ -74,6 +74,112 @@ public class ApiTests(ControlPlaneFixture fixture)
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/rulesets/ghost")).StatusCode);
     }
 
+    // ---- platform configuration is readable --------------------------------------------------
+
+    /// <summary>Who may change policy is part of the transparent posture: a caller holding no
+    /// grant at all still reads them, exactly as it reads the rulesets.</summary>
+    [Fact]
+    public async Task Any_authenticated_caller_reads_the_grants()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Stranger);
+
+        var response = await client.GetAsync("/grants");
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.EnsureSuccessStatusCode();
+        var grant = body.GetProperty("grants")[0];
+        Assert.Equal(Pipeline, grant.GetProperty("identity").GetString());
+        Assert.Equal("payments", grant.GetProperty("rulesets")[0].GetString());
+    }
+
+    /// <summary>An absent fallback is the deny-all floor. The endpoint says so rather than
+    /// returning an empty list and leaving the reader to infer it.</summary>
+    [Fact]
+    public async Task An_absent_fallback_reads_as_deny_all()
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Stranger);
+
+        var body = await (await client.GetAsync("/fallback")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.True(body.GetProperty("deny_all").GetBoolean());
+        Assert.Empty(body.GetProperty("allowed_hosts").EnumerateArray());
+    }
+
+    /// <summary>An empty allowed_hosts list is deny-all too — the schema treats absent and empty
+    /// alike, so the endpoint must not report an empty block as an open floor.</summary>
+    [Fact]
+    public async Task An_empty_fallback_reads_as_deny_all()
+    {
+        var seed = Seed(Existing()) with { Fallback = new Fallback() };
+        var client = fixture.Authenticated(fixture.Reset(seed), Stranger);
+
+        var body = await (await client.GetAsync("/fallback")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.True(body.GetProperty("deny_all").GetBoolean());
+    }
+
+    [Fact]
+    public async Task A_populated_fallback_reads_as_its_hosts()
+    {
+        var seed = Seed(Existing()) with { Fallback = new Fallback { AllowedHosts = ["packages.example.com"] } };
+        var client = fixture.Authenticated(fixture.Reset(seed), Stranger);
+
+        var body = await (await client.GetAsync("/fallback")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.False(body.GetProperty("deny_all").GetBoolean());
+        Assert.Equal("packages.example.com", body.GetProperty("allowed_hosts")[0].GetString());
+    }
+
+    /// <summary>
+    /// The API reads these sections and never writes them. Grants in particular are platform-owned
+    /// and edited out of band — a write route here would let the write path widen the authority
+    /// that authorized it, which is the property the whole grants design rests on.
+    /// </summary>
+    [Theory]
+    [InlineData("/grants")]
+    [InlineData("/fallback")]
+    public async Task Platform_sections_are_not_writable(string path)
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var put = await client.PutAsJsonAsync(path, new { });
+        var post = await client.PostAsJsonAsync(path, new { });
+        var delete = await client.DeleteAsync(path);
+
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, put.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, post.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, delete.StatusCode);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    // ---- reads report state recency ----------------------------------------------------------
+
+    /// <summary>Recency is document-scoped: it describes the state blob, so a write to ANY ruleset
+    /// moves it for every read — including the two platform reads that the write did not touch.</summary>
+    [Theory]
+    [InlineData("/rulesets")]
+    [InlineData("/rulesets/payments")]
+    [InlineData("/grants")]
+    [InlineData("/fallback")]
+    public async Task A_read_reports_recency_that_advances_after_any_write(string path)
+    {
+        var client = fixture.Authenticated(fixture.Reset(Seed(Existing())), Pipeline);
+
+        var before = await client.GetAsync(path);
+        var modifiedBefore = before.Content.Headers.LastModified;
+        var etagBefore = before.Headers.ETag;
+        Assert.NotNull(modifiedBefore);
+        Assert.NotNull(etagBefore);
+
+        (await client.PutAsJsonAsync("/rulesets/payments", Push(["api.github.com"], "enforce")))
+            .EnsureSuccessStatusCode();
+
+        var after = await client.GetAsync(path);
+
+        Assert.True(after.Content.Headers.LastModified > modifiedBefore);
+        Assert.NotEqual(etagBefore, after.Headers.ETag);
+    }
+
     // ---- authorization ----------------------------------------------------------------------
 
     [Fact]
