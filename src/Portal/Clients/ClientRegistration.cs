@@ -42,6 +42,28 @@ public static class ClientRegistration
     }
 
     /// <summary>
+    /// The SDK's newest API version is not available in every region, and the instance-level
+    /// public-IP call is one that bites: in swedencentral it answers
+    /// <c>No registered resource provider found for location ... and API version '2025-07-01'</c>,
+    /// a 400 that reads like a permissions problem and is really a regional rollout gap. Pinning a
+    /// version the console is known to work against makes the Runtime surface behave the same
+    /// wherever the deployment lives, and the fields it reads — an address and an id — have been
+    /// stable for years. Both spellings of the type are set because only one of them is the key
+    /// the SDK resolves this call under, and setting the other costs nothing.
+    /// </summary>
+    private static ArmClientOptions PinnedRuntimeApiVersions(ArmClientOptions options)
+    {
+        const string pinned = "2024-07-01";
+
+        options.SetApiVersion(new Azure.Core.ResourceType("Microsoft.Network/publicIPAddresses"), pinned);
+        options.SetApiVersion(
+            new Azure.Core.ResourceType("Microsoft.Compute/virtualMachineScaleSets/publicIPAddresses"),
+            pinned);
+
+        return options;
+    }
+
+    /// <summary>
     /// The same budget expressed for an Azure SDK client. Every client here is constructed with
     /// it, so no surface can inherit the 100-second default by being added later.
     /// </summary>
@@ -136,7 +158,7 @@ public static class ClientRegistration
         services.AddSingleton(provider => new ArmClient(
             provider.GetRequiredService<Azure.Core.TokenCredential>(),
             default(string),
-            new ArmClientOptions().WithBudget()));
+            PinnedRuntimeApiVersions(new ArmClientOptions().WithBudget())));
 
         services.AddSingleton<AuditClient>();
         services.AddSingleton<RuntimeClient>();
