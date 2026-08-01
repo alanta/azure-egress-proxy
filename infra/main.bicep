@@ -30,7 +30,7 @@ param portalImage string = ''
 @description('Source IP ranges (CIDR) permitted to reach the management console, e.g. the platform team\'s office egress. Empty means no network restriction — the console is still behind Entra sign-in, but it is an admin surface for a security control, so restricting it is the production posture (see docs/production-hardening.md).')
 param portalAllowedSourceIps array = []
 
-@description('Application (client) ID of the Entra app registration operators sign in to the console with. Created out of band by scripts/deploy.sh — an app registration is not an ARM resource. Required when deployPortal is true.')
+@description('Application (client) ID of the Entra app registration operators sign in to the console with. Created out of band by scripts/deploy.sh — an app registration is not an ARM resource. Required when deployPortal is true. Bringing your own registration means it must also have a service principal in this tenant and ID token issuance enabled: the platform signs in with the hybrid flow, and both failures land after the credential prompt rather than before it.')
 param portalAuthClientId string = ''
 
 @description('Client secret for the console\'s Entra app registration.')

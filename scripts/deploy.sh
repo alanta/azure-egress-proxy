@@ -420,6 +420,21 @@ if [[ "$deploy_portal" == "true" && -z "$portal_auth_client_id" ]]; then
     info "Reusing app registration $portal_app_name ($portal_auth_client_id)"
   fi
 
+  # An app registration is only half of it. `az ad app create` creates the application object;
+  # signing in additionally needs a service principal — the enterprise application — in this
+  # tenant, and without one every sign-in fails after the credential prompt. It is also the
+  # object the platform team gets assigned to, which the closing message tells you to do.
+  if ! az ad sp show --id "$portal_auth_client_id" --only-show-errors >/dev/null 2>&1; then
+    az ad sp create --id "$portal_auth_client_id" --only-show-errors >/dev/null
+    info "Created the enterprise application for $portal_app_name"
+  fi
+
+  # Container Apps' built-in authentication signs in with response_type=code+id_token — the
+  # hybrid flow — so the registration has to be willing to issue an ID token. Off by default on
+  # a registration created from the CLI, and the resulting failure lands after sign-in, where it
+  # reads as the console rejecting a perfectly good account.
+  az ad app update --id "$portal_auth_client_id" --enable-id-token-issuance true --only-show-errors
+
   portal_auth_client_secret="$(az ad app credential reset --id "$portal_auth_client_id" --display-name "deploy-$(date +%Y%m%d%H%M%S)" --query password -o tsv)"
 fi
 
