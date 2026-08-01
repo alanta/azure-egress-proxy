@@ -207,6 +207,32 @@ var appsNsgRules = [
     }
   }
   {
+    // The management console reads the deployment's runtime state from ARM — scale-set capacity
+    // and instance view, public-IP-prefix consumption, and the Azure Monitor metric queries, which
+    // are ARM calls too. Without this the console does not fail: it hangs, because a denied
+    // outbound connection is a silent one.
+    //
+    // This is a widening of the egress floor and it is worth naming as one. The rule cannot be
+    // scoped to the console — an NSG sees a subnet, not a container app — so the sample app shares
+    // it. A workload that reaches ARM directly can still do nothing without a token and a role
+    // assignment, and neither the sample app nor any workload here has one, but the honest
+    // statement is that the floor now has one more Azure-owned destination behind it. The
+    // production counterpart is a separate subnet for the admin surface, recorded in
+    // docs/production-hardening.md.
+    name: 'allow-azure-resource-manager'
+    properties: {
+      access: 'Allow'
+      direction: 'Outbound'
+      priority: 145
+      protocol: 'Tcp'
+      sourceAddressPrefix: '*'
+      sourcePortRange: '*'
+      destinationAddressPrefix: 'AzureResourceManager'
+      destinationPortRange: '443'
+      description: 'Management console: VMSS, public IP prefix, and Azure Monitor metric reads.'
+    }
+  }
+  {
     name: 'allow-dns'
     properties: {
       access: 'Allow'
