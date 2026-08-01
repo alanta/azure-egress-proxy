@@ -7,6 +7,14 @@ namespace Portal.Clients;
 public static class ClientRegistration
 {
     /// <summary>
+    /// The options name <c>AddStandardResilienceHandler</c> gives the typed client's pipeline:
+    /// the HTTP client's name, which for a typed client is the type's name, plus <c>-standard</c>.
+    /// </summary>
+    internal const string ControlPlaneResilienceKey = nameof(ControlPlaneClient) + "-standard";
+
+    internal const string InstanceAddressResilienceKey = InstanceAddressClient.HttpClientName + "-standard";
+
+    /// <summary>
     /// What a panel is allowed to spend before it gives up and says so.
     ///
     /// <para>This is a console an operator is looking at, not a pipeline. The library defaults are
@@ -21,12 +29,6 @@ public static class ClientRegistration
     /// thing a retry genuinely earns is surviving a dropped connection, which is why there is one
     /// and not none.</para>
     /// </summary>
-    /// <summary>
-    /// The options name <c>AddStandardResilienceHandler</c> gives the typed client's pipeline:
-    /// the HTTP client's name, which for a typed client is the type's name, plus <c>-standard</c>.
-    /// </summary>
-    internal const string ControlPlaneResilienceKey = nameof(ControlPlaneClient) + "-standard";
-
     internal static class Budget
     {
         /// <summary>One attempt against Azure. Above a human's patience, below their tolerance.</summary>
@@ -39,28 +41,6 @@ public static class ClientRegistration
         internal const int Retries = 1;
 
         internal static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(200);
-    }
-
-    /// <summary>
-    /// The SDK's newest API version is not available in every region, and the instance-level
-    /// public-IP call is one that bites: in swedencentral it answers
-    /// <c>No registered resource provider found for location ... and API version '2025-07-01'</c>,
-    /// a 400 that reads like a permissions problem and is really a regional rollout gap. Pinning a
-    /// version the console is known to work against makes the Runtime surface behave the same
-    /// wherever the deployment lives, and the fields it reads — an address and an id — have been
-    /// stable for years. Both spellings of the type are set because only one of them is the key
-    /// the SDK resolves this call under, and setting the other costs nothing.
-    /// </summary>
-    private static ArmClientOptions PinnedRuntimeApiVersions(ArmClientOptions options)
-    {
-        const string pinned = "2024-07-01";
-
-        options.SetApiVersion(new Azure.Core.ResourceType("Microsoft.Network/publicIPAddresses"), pinned);
-        options.SetApiVersion(
-            new Azure.Core.ResourceType("Microsoft.Compute/virtualMachineScaleSets/publicIPAddresses"),
-            pinned);
-
-        return options;
     }
 
     /// <summary>
@@ -158,7 +138,25 @@ public static class ClientRegistration
         services.AddSingleton(provider => new ArmClient(
             provider.GetRequiredService<Azure.Core.TokenCredential>(),
             default(string),
-            PinnedRuntimeApiVersions(new ArmClientOptions().WithBudget())));
+            new ArmClientOptions().WithBudget()));
+
+        // One ARM call the SDK cannot make here — see InstanceAddressClient. Same budget as
+        // everything else, keyed the same way.
+        services.AddHttpClient(InstanceAddressClient.HttpClientName, client =>
+            client.BaseAddress = new Uri("https://management.azure.com/"));
+        services.AddSingleton<InstanceAddressClient>();
+
+        services.Configure<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(
+            InstanceAddressResilienceKey,
+            resilience =>
+            {
+                resilience.AttemptTimeout.Timeout = Budget.Attempt;
+                resilience.TotalRequestTimeout.Timeout = Budget.Total;
+                resilience.Retry.MaxRetryAttempts = Budget.Retries;
+                resilience.Retry.Delay = Budget.RetryDelay;
+                resilience.Retry.BackoffType = Polly.DelayBackoffType.Constant;
+                resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+            });
 
         services.AddSingleton<AuditClient>();
         services.AddSingleton<RuntimeClient>();

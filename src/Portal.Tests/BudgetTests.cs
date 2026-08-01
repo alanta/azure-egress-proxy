@@ -42,6 +42,33 @@ public class BudgetTests
     }
 
     /// <summary>
+    /// Every client resolves. Two of these are singletons that depend on other clients, which is
+    /// the wiring most likely to be wrong in a way no unit test notices and the deployed console
+    /// discovers on its first request.
+    /// </summary>
+    [Fact]
+    public void The_console_resolves_its_clients()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.ConfigureHttpClientDefaults(http => http.AddStandardResilienceHandler());
+        services.AddConsoleData(new ConfigurationBuilder().Build());
+
+        // Validating on build is the point: it catches a singleton taking a scoped dependency,
+        // which is exactly what RuntimeClient would have done by holding a typed HttpClient.
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        });
+
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<RuntimeClient>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<InstanceAddressClient>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ConsoleData>());
+    }
+
+    /// <summary>
     /// The key above is only correct if it matches what the handler registers for this client.
     /// `AddStandardResilienceHandler` names its options `{clientName}-standard`, and for a typed
     /// client the name is the type's name.

@@ -48,6 +48,7 @@ public sealed class RuntimeOptions
 public sealed class RuntimeClient(
     ArmClient arm,
     MetricsQueryClient metrics,
+    InstanceAddressClient instanceAddresses,
     RuntimeOptions options,
     ILogger<RuntimeClient> logger)
 {
@@ -65,7 +66,7 @@ public sealed class RuntimeClient(
             var scaleSet = await group.GetVirtualMachineScaleSets()
                 .GetAsync(options.ScaleSetName, cancellationToken: cancellationToken);
 
-            var addresses = await InstanceAddressesAsync(group, options.ScaleSetName, cancellationToken);
+            var addresses = await InstanceAddressesAsync(options.ScaleSetName, cancellationToken);
             var instances = new List<ProxyInstance>();
 
             await foreach (var vm in scaleSet.Value.GetVirtualMachineScaleSetVms()
@@ -200,40 +201,17 @@ public sealed class RuntimeClient(
     /// Maps instance id to its instance-level public IP. The addresses live on the scale set's
     /// network interfaces rather than on the VM, so they need their own pass — and they are the
     /// half of the runtime view that actually matters to a partner allowlist.
+    ///
+    /// <para>Delegated to <see cref="InstanceAddressClient"/>, which calls ARM directly: the SDK
+    /// sends an API version that is not available for this operation in every region, and answers
+    /// a 400 that looks like a permissions problem. The client degrades to an empty map rather
+    /// than throwing, so a node table without addresses is the worst case here.</para>
     /// </summary>
-    private async Task<Dictionary<string, string>> InstanceAddressesAsync(
-        ResourceGroupResource group,
+    private Task<Dictionary<string, string>> InstanceAddressesAsync(
         string scaleSetName,
-        CancellationToken cancellationToken)
-    {
-        var addresses = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        try
-        {
-            await foreach (var ip in group.GetVirtualMachineScaleSetPublicIPAddressesAsync(
-                scaleSetName, cancellationToken))
-            {
-                // .../virtualMachines/{instanceId}/networkInterfaces/... — the instance id is the
-                // segment after virtualMachines, which is how an address is attributed to a node.
-                var segments = ip.Id?.ToString().Split('/') ?? [];
-                var index = Array.FindIndex(segments, s =>
-                    string.Equals(s, "virtualMachines", StringComparison.OrdinalIgnoreCase));
-
-                if (index >= 0 && index + 1 < segments.Length && ip.IPAddress is { } address)
-                {
-                    addresses[segments[index + 1]] = address;
-                }
-            }
-        }
-        catch (RequestFailedException e) when (e.Status == (int)HttpStatusCode.Forbidden)
-        {
-            // Reader on the hub RG covers this, but a narrower assignment should degrade the
-            // panel rather than take the whole runtime surface down with it.
-            logger.LogWarning(e, "instance public IPs are not readable; the node table will omit addresses");
-        }
-
-        return addresses;
-    }
+        CancellationToken cancellationToken) =>
+        instanceAddresses.ForScaleSetAsync(
+            options.SubscriptionId!, options.ResourceGroup!, scaleSetName, cancellationToken);
 
     private ResourceGroupResource? ResourceGroup()
     {
