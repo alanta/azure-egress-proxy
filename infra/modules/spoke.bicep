@@ -775,8 +775,17 @@ resource portalAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (d
     }
     login: {
       preserveUrlFragmentsForLogins: true
+      // No token store. It exists so an app can retrieve the signed-in user's access and refresh
+      // tokens later, and the console never acts as the user: it calls the control-plane API with
+      // its own managed identity (design.md D2) and reads nothing else on the operator's behalf.
+      // Enabling it would put user refresh tokens at rest in a blob this deployment would then
+      // have to protect, in the one component that already concentrates the most read power —
+      // and the platform requires a SAS URL setting for that blob, which the deployment refuses
+      // to create without ('SasUrlSettingName for BlobStorage must be set ... if token store is
+      // enabled'). The identity the app reads is the X-MS-CLIENT-PRINCIPAL header, which the auth
+      // sidecar sets on every forwarded request regardless.
       tokenStore: {
-        enabled: true
+        enabled: false
       }
     }
   }
