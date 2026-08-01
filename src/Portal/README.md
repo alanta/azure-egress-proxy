@@ -26,7 +26,10 @@ wwwroot/        stylesheet, embedded fonts, vendored htmx
 
 1. **No `unsafe-eval` in the CSP.** So no `hx-vals='js:…'`, no `hx-on:*`, no eval-based htmx
    extensions. Enforced by `SecurityHeaders.ContentSecurityPolicy` and asserted in
-   `Portal.Tests/ScaffoldTests`.
+   `Portal.Tests/ScaffoldTests`, which strips Razor and HTML comments before it scans — a
+   template is free to explain in place why it avoided the attribute it is naming. The CDN scan
+   next to it deliberately reads the file raw, because a CDN reference lives inside a `src="https://…"`
+   that any comment stripping would cut at the scheme.
 2. **Session expiry must never render a login page into a `div`.** `SessionMiddleware` answers an
    `HX-Request` with `401` + `HX-Redirect`, never a `302`.
 3. **Polling reads the cache, never Azure.** Every surface takes `ConsoleData`, never the raw

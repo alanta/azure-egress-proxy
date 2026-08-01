@@ -17,8 +17,12 @@ control plane; the others frame where it sits.
 |---|---|---|
 | **1 — GitOps** | one config file, PR-published on merge | **no** — direct blob write |
 | **2 — Pipeline push** | each team's pipeline pushes its own ruleset via the API | **yes** |
-| 3 — Management portal | humans edit via an app with per-ruleset RBAC | yes *(future)* |
+| 3 — Management portal | humans edit via an app with per-ruleset RBAC | yes *(read-only half ships)* |
 | 4 — Mix & match | different rulesets sit at different modes | yes *(future)* |
+
+Mode 3 is the one that is half-built. A **read-only management console** ships — it reads this
+API and shows the platform team what the configuration is and what the proxy did with it — but
+nothing in it writes policy. See [§ The management console](#the-management-console-mode-3-read-only).
 
 ## The two topologies
 
@@ -300,6 +304,90 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" $API/rulesets/payments
 # -> 200  "removed":["api.stripe.com"]
 ```
 
+## The management console (Mode 3, read-only)
+
+Everything above is a machine path: a pipeline holds a grant and pushes a file. That leaves the
+platform team answering routine questions by hand, because the three stores that hold the answers
+are not joined anywhere — authored policy lives behind this API, every enforcement decision lives
+in `EgressProxy_CL`, and the deployment's runtime state lives in ARM and Azure Monitor. *Which
+ruleset governs the appid in this denial?* was a KQL query, a lookup in `rulesets.json`, and a
+guess.
+
+[`src/Portal/`](../src/Portal/) is the console that joins them. It is a separate service — its own
+container, its own image, gated on `deployPortal` exactly as the API is gated on
+`deployControlPlane` — with six read-only surfaces: **Overview**, **Rulesets**, **Traffic**,
+**Lookup**, **Platform**, and **Runtime**. Design record:
+[`openspec/changes/management-portal-console/`](../openspec/changes/management-portal-console/).
+
+The join it exists to make is exact rather than heuristic: the audit table's `Role` column *is*
+the workload's `appid` from the validated JWT, which is precisely `subjects[].appid` here. So a
+denial resolves to the ruleset that caused it, and from there to the change that would allow it.
+A `netid` subject is the exception — its only key is the source address, which is weaker by
+construction, and the console says so on the rows where it applies rather than presenting a
+source-address correlation as an identity.
+
+### It reads; it does not write
+
+The console composes a candidate change, validates it through `POST /rulesets/{name}:check`, and
+renders the resulting `added`/`removed`/`bound`/`unbound` diff — then emits the `curl` or pipeline
+snippet that would apply it. A human applies that through the pipeline, which stays the source of
+truth. This is what keeps a read-only console from feeling crippled while leaving the write path's
+trust model completely untouched, and it avoids a side-channel edit that the next unrelated
+pipeline run would silently revert, `PUT` being a full replace.
+
+`:check` is therefore the only non-`GET` the console ever issues against this API, and the only
+one it is allowed to grow. Its Azure permissions match: `Reader` + `Monitoring Reader` on the hub
+resource group and **no write role anywhere** — in particular no `Storage Blob Data Contributor`
+on the allowlist container, so the identity that renders the console cannot reach the blob the
+proxy reads even if the console is wrong about what it may do.
+
+### Why it is a separate service, and not an endpoint here
+
+Deciding what a *user* may see requires knowing who the user is. Putting the console's queries
+into this API would therefore put human identity into the service that guards policy writes, and
+with it an opinion about the identity provider. Keeping human identity in the console leaves the
+API a machine interface — one RS256/JWKS check over service-principal tokens, unchanged by this
+change — and leaves the choice of how operators sign in reversible. The console holds its own
+managed identity and calls this API as itself; that costs nothing today, because every endpoint it
+touches consults no verb.
+
+Secondary effects all point the same way: the identity holding `Storage Blob Data Contributor`
+does not also acquire Log Analytics access and user trust, and Log Analytics latency and quota
+land in a process that is not on the policy write path.
+
+### What it deliberately does not do
+
+- **Write policy.** Mode 3 proper — humans editing rulesets in the app, under per-ruleset RBAC —
+  remains deferred, and the console is scoped so that it does not pre-empt that design. The
+  `acl.edit`/`push`/`admin` fields stay dormant.
+- **Scope what anyone sees.** One audience tier: the platform team sees everything, and nobody
+  else has access. Any narrower rule needs a user→ruleset association that exists in no document,
+  and designing that association *is* most of the RBAC model being deferred.
+- **Answer "when did *this* ruleset change?"** Recency is document-scoped, per
+  [§ API surface](#api-surface); the console labels it that way. Change history is
+  [#33](https://github.com/alanta/azure-egress-proxy/issues/33).
+- **Report drift between `rulesets.json` and `allowlist.json`.** Keeping the rendered projection
+  in sync is this API's guarantee; a drift panel in the console would quietly relocate that
+  responsibility.
+- **Show live data.** Azure Monitor's grain is one minute and Log Analytics ingestion is minutes
+  behind. Every panel states its freshness instead of implying immediacy, and a cached value keeps
+  the timestamp of the fetch that produced it.
+
+### It is on nobody's critical path
+
+The console reads the API; nothing reads the console. The proxy polls the blob and has never
+heard of either service, and a pipeline pushes to the API, which has never heard of the console.
+So a console outage costs the platform team its view and costs enforcement and policy writes
+nothing — the same fail-static reasoning that keeps the proxy independent of this API, one layer
+further out. `src/Portal.Tests/OutageTests` pins the direction of those dependencies.
+
+Its own egress goes direct rather than through the proxy (`NO_PROXY` in
+[`infra/modules/spoke.bicep`](../infra/modules/spoke.bicep)), for the same reason: a tool that
+reports on the data plane must not depend on the data plane's health to say that it is unhealthy.
+
+Operational detail — configuration, the local loop, and the contract the surfaces are built
+against — is in [`src/Portal/README.md`](../src/Portal/README.md).
+
 ## Setup
 
 ### GitOps topology (Mode 1) — the default
@@ -446,7 +534,9 @@ identity).
 
 ## Deferred (named, not built)
 
-- Management portal + human `edit` verb (Mode 3), and RBAC administration through the API.
+- The human `edit` verb (Mode 3 proper) and RBAC administration through the API. The read-only
+  half of the portal ships — see [§ The management console](#the-management-console-mode-3-read-only)
+  — and writes are deliberately not in it.
 - Reassigning subjects after onboard via the API (platform op / offboard-and-re-onboard).
 - Ruleset composition / many-to-many / a shared trusted-baseline ruleset — the `fallback`
   block covers a platform baseline for now.
