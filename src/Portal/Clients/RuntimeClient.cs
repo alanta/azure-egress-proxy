@@ -48,7 +48,7 @@ public sealed class RuntimeOptions
 public sealed class RuntimeClient(
     ArmClient arm,
     MetricsQueryClient metrics,
-    InstanceAddressClient instanceAddresses,
+    ArmDirectClient armDirect,
     RuntimeOptions options,
     ILogger<RuntimeClient> logger)
 {
@@ -108,36 +108,33 @@ public sealed class RuntimeClient(
     /// </summary>
     public async Task<EgressPool?> EgressPoolAsync(CancellationToken cancellationToken)
     {
-        if (ResourceGroup() is not { } group || string.IsNullOrWhiteSpace(options.PublicIpPrefixName))
+        if (!Configured() || string.IsNullOrWhiteSpace(options.PublicIpPrefixName))
         {
             return null;
         }
 
-        try
-        {
-            var prefix = await group.GetPublicIPPrefixes()
-                .GetAsync(options.PublicIpPrefixName, cancellationToken: cancellationToken);
+        var snapshot = await armDirect.PrefixAsync(
+            options.SubscriptionId!, options.ResourceGroup!, options.PublicIpPrefixName, cancellationToken);
 
-            var data = prefix.Value.Data;
-            var length = data.PrefixLength ?? 0;
-            var addresses = (data.PublicIPAddresses ?? []).Select(a => a.Id?.ToString() ?? string.Empty).ToList();
-
-            return new EgressPool(
-                data.Name,
-                data.IPPrefix,
-                length,
-                // An IPv4 prefix of length /n holds 2^(32-n) addresses. Azure reserves none of a
-                // public IP prefix, unlike a subnet, so this is the usable count as well.
-                length is > 0 and <= 32 ? 1 << (32 - length) : 0,
-                addresses.Count,
-                addresses,
-                Freshness.Now);
-        }
-        catch (RequestFailedException e)
+        if (snapshot is null)
         {
-            logger.LogError(e, "reading the egress public IP prefix failed ({Status})", e.Status);
             return null;
         }
+
+        var length = snapshot.PrefixLength;
+
+        return new EgressPool(
+            // The resource always has a name; falling back to the configured one keeps the panel
+            // labelled rather than blank if ARM ever omits it.
+            snapshot.Name ?? options.PublicIpPrefixName,
+            snapshot.IPPrefix,
+            length,
+            // An IPv4 prefix of length /n holds 2^(32-n) addresses. Azure reserves none of a
+            // public IP prefix, unlike a subnet, so this is the usable count as well.
+            length is > 0 and <= 32 ? 1 << (32 - length) : 0,
+            snapshot.AddressIds.Count,
+            snapshot.AddressIds,
+            Freshness.Now);
     }
 
     /// <summary>
@@ -202,7 +199,7 @@ public sealed class RuntimeClient(
     /// network interfaces rather than on the VM, so they need their own pass — and they are the
     /// half of the runtime view that actually matters to a partner allowlist.
     ///
-    /// <para>Delegated to <see cref="InstanceAddressClient"/>, which calls ARM directly: the SDK
+    /// <para>Delegated to <see cref="ArmDirectClient"/>, which calls ARM directly: the SDK
     /// sends an API version that is not available for this operation in every region, and answers
     /// a 400 that looks like a permissions problem. The client degrades to an empty map rather
     /// than throwing, so a node table without addresses is the worst case here.</para>
@@ -210,8 +207,21 @@ public sealed class RuntimeClient(
     private Task<Dictionary<string, string>> InstanceAddressesAsync(
         string scaleSetName,
         CancellationToken cancellationToken) =>
-        instanceAddresses.ForScaleSetAsync(
+        armDirect.ForScaleSetAsync(
             options.SubscriptionId!, options.ResourceGroup!, scaleSetName, cancellationToken);
+
+    /// <summary>True when the hub subscription and resource group are configured; the direct ARM
+    /// reads need those two strings rather than an SDK resource object.</summary>
+    private bool Configured()
+    {
+        if (string.IsNullOrWhiteSpace(options.SubscriptionId) || string.IsNullOrWhiteSpace(options.ResourceGroup))
+        {
+            logger.LogWarning("no hub subscription/resource group configured; runtime surfaces will be empty");
+            return false;
+        }
+
+        return true;
+    }
 
     private ResourceGroupResource? ResourceGroup()
     {

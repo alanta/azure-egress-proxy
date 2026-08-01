@@ -12,7 +12,7 @@ public static class ClientRegistration
     /// </summary>
     internal const string ControlPlaneResilienceKey = nameof(ControlPlaneClient) + "-standard";
 
-    internal const string InstanceAddressResilienceKey = InstanceAddressClient.HttpClientName + "-standard";
+    internal const string InstanceAddressResilienceKey = ArmDirectClient.HttpClientName + "-standard";
 
     /// <summary>
     /// What a panel is allowed to spend before it gives up and says so.
@@ -140,11 +140,11 @@ public static class ClientRegistration
             default(string),
             new ArmClientOptions().WithBudget()));
 
-        // One ARM call the SDK cannot make here — see InstanceAddressClient. Same budget as
+        // One ARM call the SDK cannot make here — see ArmDirectClient. Same budget as
         // everything else, keyed the same way.
-        services.AddHttpClient(InstanceAddressClient.HttpClientName, client =>
+        services.AddHttpClient(ArmDirectClient.HttpClientName, client =>
             client.BaseAddress = new Uri("https://management.azure.com/"));
-        services.AddSingleton<InstanceAddressClient>();
+        services.AddSingleton<ArmDirectClient>();
 
         services.Configure<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(
             InstanceAddressResilienceKey,

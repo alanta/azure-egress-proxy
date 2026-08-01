@@ -64,7 +64,7 @@ public class BudgetTests
 
         using var scope = provider.CreateScope();
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<RuntimeClient>());
-        Assert.NotNull(scope.ServiceProvider.GetRequiredService<InstanceAddressClient>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ArmDirectClient>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ConsoleData>());
     }
 
