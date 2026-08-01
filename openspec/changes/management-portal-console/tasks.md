@@ -123,16 +123,16 @@ No surface edits another's files.
 
 ### 12. Documentation
 
-- [ ] 12.1 Document the portal in `docs/control-plane.md`: Mode 3 status, the read-only scope, and what is deferred
-- [ ] 12.2 Record the invariant that the control-plane API is a machine interface, in `AGENTS.md` § Invariants
-- [ ] 12.3 Note the portal's read-only Azure permissions and its concentration of read power in `docs/production-hardening.md`
-- [ ] 12.4 Update `ROADMAP.md`: the console ships, human editing (Mode 3 proper) remains deferred
-- [ ] 12.5 Add the portal to `AGENTS.md` § Where the code lives and the read-before-you-write table
+- [x] 12.1 Document the portal in `docs/control-plane.md`: Mode 3 status, the read-only scope, and what is deferred
+- [x] 12.2 Record the invariant that the control-plane API is a machine interface, in `AGENTS.md` § Invariants
+- [x] 12.3 Note the portal's read-only Azure permissions and its concentration of read power in `docs/production-hardening.md`
+- [x] 12.4 Update `ROADMAP.md`: the console ships, human editing (Mode 3 proper) remains deferred
+- [x] 12.5 Add the portal to `AGENTS.md` § Where the code lives and the read-before-you-write table
 
 ### 13. Verification
 
-- [ ] 13.1 `dotnet restore --locked-mode`, build, and test the full solution; commit regenerated lock files alongside any package change
-- [ ] 13.2 Run the `SECURITY_GUIDELINES.md` review checklist over the new workflow and infrastructure changes
-- [ ] 13.3 Confirm the deployed CSP carries no `unsafe-eval` and that no `hx-on:*` or `js:` attribute reached the templates
-- [ ] 13.4 Confirm a portal outage leaves proxy enforcement and pipeline writes unaffected
-- [ ] 13.5 Exercise the local loop end to end: push a ruleset, provoke a denial, and confirm the console traces it back to the ruleset that caused it
+- [x] 13.1 `dotnet restore --locked-mode`, build, and test the full solution; commit regenerated lock files alongside any package change
+- [x] 13.2 Run the `SECURITY_GUIDELINES.md` review checklist over the new workflow and infrastructure changes
+- [x] 13.3 Confirm the deployed CSP carries no `unsafe-eval` and that no `hx-on:*` or `js:` attribute reached the templates
+- [x] 13.4 Confirm a portal outage leaves proxy enforcement and pipeline writes unaffected
+- [x] 13.5 Exercise the local loop end to end: push a ruleset, provoke a denial, and confirm the console traces it back to the ruleset that caused it

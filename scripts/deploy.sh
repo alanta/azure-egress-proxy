@@ -348,6 +348,29 @@ if [[ "$deploy_portal" == "true" && -z "$portal_auth_client_id" ]]; then
   portal_auth_client_secret="$(az ad app credential reset --id "$portal_auth_client_id" --display-name "deploy-$(date +%Y%m%d%H%M%S)" --query password -o tsv)"
 fi
 
+# The client secret travels to `az` in a parameters file, not as a command-line argument:
+# argv is world-readable through /proc for as long as the deployment runs, which is tens of
+# minutes. The file lives in $patch_dir (mktemp -d, mode 700) and goes with it on exit, and the
+# value reaches python through the environment rather than argv for the same reason. The
+# parameter is @secure() in Bicep, so ARM does not keep it in the deployment history either.
+secret_params=()
+if [[ -n "$portal_auth_client_secret" ]]; then
+  portal_secret_file="$patch_dir/portal-auth.parameters.json"
+  PORTAL_AUTH_CLIENT_SECRET_VALUE="$portal_auth_client_secret" python3 - "$portal_secret_file" <<'PY'
+import json, os, sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({
+        "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+        "contentVersion": "1.0.0.0",
+        "parameters": {
+            "portalAuthClientSecret": {"value": os.environ["PORTAL_AUTH_CLIENT_SECRET_VALUE"]},
+        },
+    }, handle)
+PY
+  secret_params=(--parameters "@$portal_secret_file")
+fi
+
 read_json() {
   local key="$1"
   python3 - "$identity_file" "$key" <<'PY'
@@ -406,7 +429,7 @@ az deployment sub create \
     portalImage="$portal_image" \
     portalAllowedSourceIps="$portal_allowed_source_ips_json" \
     portalAuthClientId="$portal_auth_client_id" \
-    portalAuthClientSecret="$portal_auth_client_secret"
+  ${secret_params[@]+"${secret_params[@]}"}
 
 step "Reading deployment outputs"
 deployment_output_json="$(az deployment sub show --name "$deployment_name" --query properties.outputs -o json)"

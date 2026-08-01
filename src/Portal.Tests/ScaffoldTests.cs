@@ -42,9 +42,8 @@ public class ScaffoldTests
     [InlineData("hx-vals=\"js:")]
     public void No_template_uses_an_eval_based_affordance(string forbidden)
     {
-        var offenders = Repo.Files("src/Portal", "*.cshtml")
-            .Where(file => !file.Contains("/obj/", StringComparison.Ordinal))
-            .Where(file => Repo.ReadText(file).Contains(forbidden, StringComparison.Ordinal))
+        var offenders = Templates()
+            .Where(file => Markup(file).Contains(forbidden, StringComparison.Ordinal))
             .ToList();
 
         Assert.True(offenders.Count == 0,
@@ -70,15 +69,21 @@ public class ScaffoldTests
             StringComparison.Ordinal);
     }
 
-    /// <summary>No CDN in the trust path of a security reference implementation.</summary>
+    /// <summary>
+    /// No CDN in the trust path of a security reference implementation.
+    ///
+    /// This one reads the file <i>raw</i>, unlike the scan above. A CDN reference lives inside a
+    /// <c>src="https://…"</c>, and any line-level comment stripping would cut it at the <c>//</c>
+    /// of the scheme and hide exactly the violation being looked for. Mentioning a CDN host in a
+    /// comment is not a thing anyone needs to do, so the false positive this risks costs nothing.
+    /// </summary>
     [Theory]
     [InlineData("unpkg.com")]
     [InlineData("cdn.jsdelivr.net")]
     [InlineData("cdnjs.cloudflare.com")]
     public void No_template_loads_a_script_from_a_cdn(string host)
     {
-        var offenders = Repo.Files("src/Portal", "*.cshtml")
-            .Where(file => !file.Contains("/obj/", StringComparison.Ordinal))
+        var offenders = Templates()
             .Where(file => Repo.ReadText(file).Contains(host, StringComparison.Ordinal))
             .ToList();
 
@@ -152,6 +157,55 @@ public class ScaffoldTests
 
         Assert.True(reached);
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    /// <summary>
+    /// The scan above is only honest if a template may explain the rule it obeys. Three of the
+    /// surfaces do exactly that, so this pins the stripping rather than leaving it implied.
+    /// </summary>
+    [Fact]
+    public void A_comment_may_name_the_affordance_it_avoids()
+    {
+        const string template = """
+            @* filtering here would need hx-vals='js:…' *@
+            <!-- and hx-on:click likewise -->
+            <div hx-get="/traffic/denials"></div>
+            """;
+
+        var stripped = ScaffoldTests.WithoutComments(template);
+
+        Assert.DoesNotContain("hx-vals='js:", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("hx-on:", stripped, StringComparison.Ordinal);
+        Assert.Contains("hx-get", stripped, StringComparison.Ordinal);
+    }
+
+    /// <summary>The portal's Razor templates, excluding the build output.</summary>
+    private static IEnumerable<string> Templates() =>
+        Repo.Files("src/Portal", "*.cshtml")
+            .Where(file => !file.Contains("/obj/", StringComparison.Ordinal));
+
+    /// <summary>
+    /// A template with its comments removed. The rules asserted here are the kind a template
+    /// explains in place — "filtering by a computed value would need hx-vals='js:…', which the CSP
+    /// does not grant" is the rule being documented, and a scan that cannot tell it from a
+    /// violation fails the build for saying the right thing. Razor block comments and HTML
+    /// comments only: the eval-based affordances are attributes, so nothing is hiding in a
+    /// trailing <c>//</c>.
+    /// </summary>
+    private static string Markup(string file) => WithoutComments(Repo.ReadText(file));
+
+    internal static string WithoutComments(string text)
+    {
+        foreach (var (open, close) in new[] { ("@*", "*@"), ("<!--", "-->") })
+        {
+            while (text.IndexOf(open, StringComparison.Ordinal) is var start and >= 0
+                && text.IndexOf(close, start, StringComparison.Ordinal) is var end and > 0)
+            {
+                text = text.Remove(start, end - start + close.Length);
+            }
+        }
+
+        return text;
     }
 
     private static SessionMiddleware Middleware() =>
