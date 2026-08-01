@@ -53,6 +53,14 @@ portal_allowed_source_ips="${PORTAL_ALLOWED_SOURCE_IPS:-}"
 # The console signs operators in through an Entra app registration, which is not an ARM resource
 # and so cannot be created by the template. Left unset, deploy.sh creates one (see below).
 acr_name="${ACR_NAME:-${name_prefix}acr$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
+# BUILD_IMAGES_LOCALLY=true builds the three platform images from this working tree and pushes
+# them to the demo ACR, instead of importing the published ones from GHCR. That is what you want
+# when the change under test has not been pushed yet — there is no release image to import — and
+# it is the same ACR either way, because the CAE egress floor opens MCR and this registry only.
+# Images are tagged from the git description, so a redeploy of changed code always lands as a new
+# container-app revision rather than silently reusing a cached :latest.
+build_images_locally="${BUILD_IMAGES_LOCALLY:-false}"
+container_cli="${CONTAINER_CLI:-}"
 # Binary delivery. The VM fetches the proxy binary from PROXY_BINARY_URL at boot via
 # a plain (unauthenticated) curl, so it MUST be an http(s):// URL reachable from the
 # proxy subnet — never a local path. Leave PROXY_BINARY_URL unset (the default) to have
@@ -299,14 +307,81 @@ import_image() {
   printf '%s' "$target"
 }
 
+# Build one image from this working tree and push it to the demo ACR. Same contract as
+# import_image: everything chatty goes to stderr, the resolved reference is the only thing on
+# stdout, because the call site captures it.
+# Args: <repo name in acr> <dockerfile path>
+build_image() {
+  local repo="$1" dockerfile="$2"
+  local target="${acr_name}.azurecr.io/${repo}:${local_image_tag}"
+
+  info "Building $dockerfile -> $target (linux/amd64)"
+  # --platform is explicit because the Container Apps environment is amd64 and a developer on
+  # arm64 would otherwise push an image that cannot start there, with a runtime error rather
+  # than a build one.
+  "$container_cli" build --platform linux/amd64 -t "$target" -f "$repo_root/$dockerfile" "$repo_root" >&2
+
+  acr_docker_login
+  info "Pushing $target"
+  "$container_cli" push "$target" >&2
+
+  printf '%s' "$target"
+}
+
+# One registry login per run, with the token on stdin rather than in argv — a push credential is
+# a credential (SECURITY_GUIDELINES.md § 1.4), and argv is world-readable through /proc.
+acr_docker_login() {
+  [[ -n "$acr_logged_in" ]] && return 0
+
+  local token
+  info "Signing in to ACR '$acr_name'"
+  token="$(az acr login --name "$acr_name" --expose-token --only-show-errors --query accessToken -o tsv)"
+  printf '%s' "$token" | "$container_cli" login "${acr_name}.azurecr.io" \
+    --username 00000000-0000-0000-0000-000000000000 --password-stdin >&2
+
+  acr_logged_in=1
+}
+
+# Import the published image, or build the local one. The call sites do not care which.
+prepare_image() {
+  local source="$1" repo="$2" dockerfile="$3"
+
+  if [[ "$build_images_locally" == "true" ]]; then
+    build_image "$repo" "$dockerfile"
+  else
+    import_image "$source" "$repo" "$dockerfile"
+  fi
+}
+
 container_registry_name=""
 acr_ready=""
+acr_logged_in=""
+local_image_tag=""
+
+if [[ "$build_images_locally" == "true" ]]; then
+  if [[ -z "$container_cli" ]]; then
+    if command -v docker >/dev/null 2>&1; then container_cli=docker
+    elif command -v podman >/dev/null 2>&1; then container_cli=podman
+    else
+      echo "ERROR: BUILD_IMAGES_LOCALLY=true needs docker or podman on PATH (or set CONTAINER_CLI)." >&2
+      exit 1
+    fi
+  fi
+  # The tag names the commit the image was built from, so a deployed revision is traceable back
+  # to source. A dirty tree gets a timestamp as well: those bytes exist in no commit, and reusing
+  # the clean commit's tag for them would make the registry lie about what is running.
+  local_image_tag="local-$(git -C "$repo_root" rev-parse --short HEAD)"
+  if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ]]; then
+    local_image_tag="${local_image_tag}-dirty-$(date +%Y%m%d%H%M%S)"
+  fi
+  info "Building images locally with $container_cli, tagged :$local_image_tag"
+fi
 
 if [[ -z "$sample_app_image" ]]; then
   step "Preparing sample-app image in a private ACR"
   container_registry_name="$acr_name"
   ensure_demo_acr
-  sample_app_image="$(import_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
+  sample_app_image="$(prepare_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
 fi
 
 # Mode 2. The control plane is the only writer of the allowlist blobs, so deploying it changes
@@ -316,7 +391,7 @@ if [[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]]; then
   step "Preparing control-plane image in a private ACR"
   container_registry_name="$acr_name"
   ensure_demo_acr
-  control_plane_image="$(import_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
+  control_plane_image="$(prepare_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
 fi
 
 # Mode 3.
@@ -324,7 +399,7 @@ if [[ "$deploy_portal" == "true" && -z "$portal_image" ]]; then
   step "Preparing management-console image in a private ACR"
   container_registry_name="$acr_name"
   ensure_demo_acr
-  portal_image="$(import_image "$portal_image_source" portal src/Portal/Dockerfile)"
+  portal_image="$(prepare_image "$portal_image_source" portal src/Portal/Dockerfile)"
 fi
 
 # The console's sign-in app registration. Created here rather than in Bicep because an Entra app
