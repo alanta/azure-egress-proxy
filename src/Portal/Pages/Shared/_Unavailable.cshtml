@@ -1,0 +1,16 @@
+@model string?
+@* A read that failed, said out loud.
+
+   Every surface already degrades one source at a time and renders what it could read, which is
+   the right behaviour — but a panel that is empty because Azure was unreachable looks exactly
+   like a panel that is empty because there is nothing to report, and on a console someone makes
+   decisions from those two must not look alike. "No denials" and "we could not ask" are opposite
+   findings.
+
+   Deliberately not an alert, and deliberately not a retry: the clients give up in seconds
+   (ClientRegistration.Budget) precisely so the operator gets an answer and can decide whether to
+   refresh, rather than watching a page hang while a library works through its backoff. *@
+@if (!string.IsNullOrWhiteSpace(Model))
+{
+    <partial name="_Banner" model="@(new BannerModel("⚠️", Model + " — refresh to try again."))" />
+}

@@ -685,7 +685,13 @@ module portal 'br/public:avm/res/app/container-app:0.22.0' = if (deployPortal) {
           }
           {
             name: 'CONTROL_PLANE_URL'
-            value: deployControlPlane ? 'https://${controlPlane!.outputs.fqdn}' : ''
+            // The app name, not the ingress FQDN. Both services sit in this Container Apps
+            // environment, so the name resolves on the environment's internal network and the call
+            // never leaves the VNet. The FQDN resolves to the environment's *public* address, which
+            // would send an internal call out to the Internet and straight into the egress floor's
+            // deny rule — the console would simply hang until it timed out, which is exactly what
+            // it did the first time this was deployed.
+            value: deployControlPlane ? 'http://${controlPlane!.outputs.name}' : ''
           }
           {
             // The console calls the control-plane API as ITSELF, with its own managed identity,
