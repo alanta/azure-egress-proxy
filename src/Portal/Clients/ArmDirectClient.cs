@@ -9,17 +9,25 @@ namespace Portal.Clients;
 ///
 /// <para>This is the only place the console leaves the SDK, and it is worth saying why rather than
 /// leaving it to look like an oversight. Both were found by deploying, and neither is our bug —
-/// but both are ours to work around, because both fail in ways that look like something else.</para>
+/// but both are ours to work around, because both fail in ways that look like something else. Both
+/// are filed upstream, and <b>this whole file should be deleted when they are fixed</b>; the issue
+/// numbers are on the two methods below so a reader who checks one can find the other.</para>
+///
+/// <para>Full write-ups, with reproductions that stand alone:
+/// <see href="https://github.com/alanta/azure-egress-proxy/blob/main/AZURE-SDK-ISSUES.md">AZURE-SDK-ISSUES.md</see>.</para>
 ///
 /// <list type="bullet">
-/// <item><b>The scale set's instance addresses.</b>
+/// <item><b>The scale set's instance addresses</b>
+/// (<see href="https://github.com/Azure/azure-sdk-for-net/issues/61649">Azure/azure-sdk-for-net#61649</see>).
 /// <c>GetVirtualMachineScaleSetPublicIPAddressesAsync</c> sends the API version its package was
 /// built against — 2025-07-01 in Azure.ResourceManager.Network 1.16.1 — which is not rolled out
 /// for that operation in every region. In swedencentral it answers <c>400: No registered resource
 /// provider found</c>, which reads as a permissions problem and is a regional rollout gap.
 /// <c>ArmClientOptions.SetApiVersion</c> does not reach it: the call is an extension method whose
 /// version is not resolved through the type keys that option accepts.</item>
-/// <item><b>The public IP prefix's allocated addresses.</b> Worse, because it fails silently:
+/// <item><b>The public IP prefix's allocated addresses</b>
+/// (<see href="https://github.com/Azure/azure-sdk-for-net/issues/61648">Azure/azure-sdk-for-net#61648</see>).
+/// Worse, because it fails silently:
 /// <c>PublicIPPrefixData.PublicIPAddresses</c> deserialises as empty however many addresses the
 /// service returns. The wire carries <c>properties.publicIPAddresses</c> at every API version the
 /// region supports; the model does not surface it. The panel therefore reported <i>0 of 2 in
@@ -54,6 +62,12 @@ public sealed class ArmDirectClient(
     /// <summary>
     /// Instance id → public IP address. An empty map is a degraded panel, never an exception: the
     /// node table drops its address column and the rest of the runtime view still renders.
+    ///
+    /// <para><b>Workaround for
+    /// <see href="https://github.com/Azure/azure-sdk-for-net/issues/61649">Azure/azure-sdk-for-net#61649</see></b>
+    /// — <c>GetVirtualMachineScaleSetPublicIPAddressesAsync</c> sends an API version the region
+    /// does not support, and <c>SetApiVersion</c> cannot override it. When that issue closes,
+    /// replace this with the SDK call and check the Runtime surface still lists node addresses.</para>
     /// </summary>
     public async Task<Dictionary<string, string>> ForScaleSetAsync(
         string subscriptionId,
@@ -130,6 +144,13 @@ public sealed class ArmDirectClient(
     /// <summary>
     /// The prefix, its length, and the ids of the addresses allocated from it. <c>null</c> when the
     /// read failed, so the panel can say so rather than claim an empty pool.
+    ///
+    /// <para><b>Workaround for
+    /// <see href="https://github.com/Azure/azure-sdk-for-net/issues/61648">Azure/azure-sdk-for-net#61648</see></b>
+    /// — <c>PublicIPPrefixData.PublicIPAddresses</c> deserialises as empty whatever the service
+    /// returns. When that issue closes, replace this with the SDK call and check the egress pool
+    /// panel against a prefix whose addresses are actually assigned: the failure mode is a silent
+    /// zero, so a test on an unused prefix would pass either way.</para>
     /// </summary>
     public async Task<PrefixSnapshot?> PrefixAsync(
         string subscriptionId,

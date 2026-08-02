@@ -5,8 +5,15 @@ deployed. Both are worked around in
 [`src/Portal/Clients/ArmDirectClient.cs`](src/Portal/Clients/ArmDirectClient.cs), which exists
 only because of them and should be deleted if they are fixed.
 
-Written up here so they can be reported upstream and re-checked on a later package version. Not a
-task list for this repo — the console already behaves correctly.
+Both are filed upstream, and the workarounds carry the issue number at the point of use so a
+reader who finds one can find the other:
+
+| Issue | Defect | Workaround |
+|---|---|---|
+| [Azure/azure-sdk-for-net#61648](https://github.com/Azure/azure-sdk-for-net/issues/61648) | `PublicIPPrefixData.PublicIPAddresses` always empty (`CodeGenSuppress` shim) | `ArmDirectClient.PrefixAsync` |
+| [Azure/azure-sdk-for-net#61649](https://github.com/Azure/azure-sdk-for-net/issues/61649) | `GetVirtualMachineScaleSetPublicIPAddressesAsync` sends an unavailable API version; `SetApiVersion` cannot override it | `ArmDirectClient.ForScaleSetAsync` |
+
+Not a task list for this repo — the console already behaves correctly.
 
 **Environment for both.** `Azure.ResourceManager.Network` 1.16.1, `Azure.ResourceManager` 1.15.0,
 `Azure.Identity` 1.21.0, .NET 10, region `swedencentral`, observed 2026-08-01. Both were
@@ -16,6 +23,8 @@ reproduced outside the console, in a standalone console app authenticating with
 ---
 
 ## 1. `PublicIPPrefixData.PublicIPAddresses` is always empty
+
+**Filed as [Azure/azure-sdk-for-net#61648](https://github.com/Azure/azure-sdk-for-net/issues/61648).**
 
 **The serious one**, because it fails silently and in the dangerous direction.
 
@@ -69,6 +78,8 @@ Wrong, confident, and in the direction that prompts nobody to check.
 ---
 
 ## 2. `GetVirtualMachineScaleSetPublicIPAddressesAsync` sends an unavailable API version
+
+**Filed as [Azure/azure-sdk-for-net#61649](https://github.com/Azure/azure-sdk-for-net/issues/61649).**
 
 The extension method sends whichever API version the package was built against — `2025-07-01` in
 1.16.1 — for an operation whose regional rollout lags that version.
@@ -126,3 +137,9 @@ Both workarounds are in one file and neither is load-bearing beyond the Runtime 
 newer package: bump `Azure.ResourceManager.Network` in `Directory.Packages.props`, regenerate the
 lock files, and run the two reproductions above against a real deployment — a unit test cannot see
 either defect, since both are about what Azure returns and how the SDK deserialises it.
+
+Check #61648 against a prefix whose addresses are **actually assigned**. Its failure mode is a
+silent zero, so a prefix with nothing allocated to it returns the same empty list whether the bug
+is fixed or not, and the test would pass either way.
+
+When both close, delete `ArmDirectClient` and this file with it.
