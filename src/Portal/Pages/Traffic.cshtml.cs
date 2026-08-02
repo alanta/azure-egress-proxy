@@ -103,7 +103,9 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
 
     /// <summary>Set when a source could not be read, so a panel can say so instead of rendering
     /// zeroes — "0 denials" shown because the query failed is worse than showing nothing.</summary>
-    public string? Error { get; private set; }
+    public string? Error => _errors.Message;
+
+    private readonly LoadErrors _errors = new();
 
     // ---- the join, 8.2 / 8.3 ------------------------------------------------------------------
 
@@ -220,11 +222,14 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         ViewData["Surface"] = Surface.Traffic.Key;
         ReadFilters(window, subject, host);
 
-        await LoadSummaryAsync(cancellationToken);
-        await LoadDenialsAsync(cancellationToken);
-        await LoadCredentialsAsync(cancellationToken);
-        await LoadChallengesAsync(cancellationToken);
-        await LoadVolumeAsync(cancellationToken);
+        // Five independent Log Analytics reads. Serially this was the page the review noticed
+        // most, because switching the window re-runs all of them.
+        await Task.WhenAll(
+            LoadSummaryAsync(cancellationToken),
+            LoadDenialsAsync(cancellationToken),
+            LoadCredentialsAsync(cancellationToken),
+            LoadChallengesAsync(cancellationToken),
+            LoadVolumeAsync(cancellationToken));
     }
 
     // ---- panel handlers, one per swap target ---------------------------------------------------
@@ -241,8 +246,8 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         string? window, string? subject, string? host, CancellationToken cancellationToken)
     {
         ReadFilters(window, subject, host);
-        await LoadSummaryAsync(cancellationToken);
-        await LoadDenialsAsync(cancellationToken);
+        // The summary rides along with every panel swap; it does not have to wait for it.
+        await Task.WhenAll(LoadSummaryAsync(cancellationToken), LoadDenialsAsync(cancellationToken));
         return Partial("_TrafficDenials", this);
     }
 
@@ -250,8 +255,8 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         string? window, string? subject, string? host, CancellationToken cancellationToken)
     {
         ReadFilters(window, subject, host);
-        await LoadSummaryAsync(cancellationToken);
-        await LoadCredentialsAsync(cancellationToken);
+        // The summary rides along with every panel swap; it does not have to wait for it.
+        await Task.WhenAll(LoadSummaryAsync(cancellationToken), LoadCredentialsAsync(cancellationToken));
         return Partial("_TrafficCredentials", this);
     }
 
@@ -259,8 +264,8 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         string? window, string? subject, string? host, CancellationToken cancellationToken)
     {
         ReadFilters(window, subject, host);
-        await LoadSummaryAsync(cancellationToken);
-        await LoadChallengesAsync(cancellationToken);
+        // The summary rides along with every panel swap; it does not have to wait for it.
+        await Task.WhenAll(LoadSummaryAsync(cancellationToken), LoadChallengesAsync(cancellationToken));
         return Partial("_TrafficChallenges", this);
     }
 
@@ -268,8 +273,8 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         string? window, string? subject, string? host, CancellationToken cancellationToken)
     {
         ReadFilters(window, subject, host);
-        await LoadSummaryAsync(cancellationToken);
-        await LoadVolumeAsync(cancellationToken);
+        // The summary rides along with every panel swap; it does not have to wait for it.
+        await Task.WhenAll(LoadSummaryAsync(cancellationToken), LoadVolumeAsync(cancellationToken));
         return Partial("_TrafficVolume", this);
     }
 
@@ -436,7 +441,7 @@ public sealed class TrafficModel(ConsoleData data, ILogger<TrafficModel> logger)
         catch (Exception e) when (e is not OperationCanceledException)
         {
             logger.LogError(e, "the traffic surface could not read {What}", what);
-            Error = $"{what} could not be read";
+            _errors.Record(what);
             return default;
         }
     }

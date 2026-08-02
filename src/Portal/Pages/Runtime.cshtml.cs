@@ -47,7 +47,9 @@ public sealed class RuntimeModel(ConsoleData data, ILogger<RuntimeModel> logger)
 
     /// <summary>Set when a source could not be read. Panels key off their own null instead, so this
     /// exists for the log and for the one line the page head can honestly say.</summary>
-    public string? Error { get; private set; }
+    public string? Error => _errors.Message;
+
+    private readonly LoadErrors _errors = new();
 
     // ---- what the fleet card says --------------------------------------------------------------
 
@@ -156,9 +158,10 @@ public sealed class RuntimeModel(ConsoleData data, ILogger<RuntimeModel> logger)
         ViewData["Title"] = "Runtime";
         ViewData["Surface"] = Surface.Runtime.Key;
 
-        await LoadFleetAsync(cancellationToken);
-        await LoadPoolAsync(cancellationToken);
-        await LoadChartsAsync(cancellationToken);
+        await Task.WhenAll(
+            LoadFleetAsync(cancellationToken),
+            LoadPoolAsync(cancellationToken),
+            LoadChartsAsync(cancellationToken));
     }
 
     // ---- panel handlers, one per swap target ---------------------------------------------------
@@ -173,8 +176,7 @@ public sealed class RuntimeModel(ConsoleData data, ILogger<RuntimeModel> logger)
     {
         // The pool panel attributes addresses to nodes, so it needs the scale set too. Both reads
         // hit the same 1-minute cache the fleet panel just filled, not Azure.
-        await LoadFleetAsync(cancellationToken);
-        await LoadPoolAsync(cancellationToken);
+        await Task.WhenAll(LoadFleetAsync(cancellationToken), LoadPoolAsync(cancellationToken));
         return Partial("_RuntimePool", this);
     }
 
@@ -211,12 +213,19 @@ public sealed class RuntimeModel(ConsoleData data, ILogger<RuntimeModel> logger)
 
     private async Task LoadChartsAsync(CancellationToken cancellationToken)
     {
-        var networkOut = await MetricAsync(
+        // Three separate Azure Monitor queries with nothing to say to each other.
+        var networkOutTask = MetricAsync(
             RuntimeMetric.NetworkOut, "Network Out Total", "bytes", "throughput", cancellationToken);
-        var cpu = await MetricAsync(
+        var cpuTask = MetricAsync(
             RuntimeMetric.CpuPercent, "Percentage CPU", "%", "CPU", cancellationToken);
-        var availability = await MetricAsync(
+        var availabilityTask = MetricAsync(
             RuntimeMetric.VmAvailability, "VmAvailabilityMetric", "", "VM availability", cancellationToken);
+
+        await Task.WhenAll(networkOutTask, cpuTask, availabilityTask);
+
+        var networkOut = networkOutTask.Result;
+        var cpu = cpuTask.Result;
+        var availability = availabilityTask.Result;
 
         Charts =
         [
@@ -415,7 +424,7 @@ public sealed class RuntimeModel(ConsoleData data, ILogger<RuntimeModel> logger)
         catch (Exception e) when (e is not OperationCanceledException)
         {
             logger.LogError(e, "the runtime surface could not read {What}", what);
-            Error = $"{what} could not be read";
+            _errors.Record(what);
             return default;
         }
     }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -85,7 +86,9 @@ public sealed class RulesetsModel(ConsoleData data, ILogger<RulesetsModel> logge
 
     /// <summary>Set when a source could not be read, so a panel can say so instead of rendering
     /// zeroes that look like an all-clear.</summary>
-    public string? Error { get; private set; }
+    public string? Error => _errors.Message;
+
+    private readonly LoadErrors _errors = new();
 
     // ---- rendering helpers ---------------------------------------------------------------------
 
@@ -322,25 +325,44 @@ public sealed class RulesetsModel(ConsoleData data, ILogger<RulesetsModel> logge
             return;
         }
 
-        var denied = new List<DecisionRow>();
-        var offList = new List<ReportFinding>();
-
+        // Two Log Analytics reads per governed identity, which is why this is bounded rather than
+        // sequential: a ruleset with a dozen subjects made the detail panel a dozen round trips
+        // deep. The limit exists because the other end is a metered query service and a ruleset's
+        // subject list has no ceiling — unbounded fan-out would turn one operator's click into a
+        // burst the workspace charges for.
+        //
         // Only appid subjects. A netid subject joins on a source address, which the audit rows
         // carry but which is not an identity — the panel says so rather than producing a table that
         // looks like the same answer.
-        foreach (var appid in Appids(selected))
-        {
-            var decisions = await TryAsync(
-                () => data.DecisionsForRoleAsync(appid, Window, cancellationToken), "decisions") ?? [];
-            denied.AddRange(decisions.Where(d => !d.Allowed));
+        var denied = new ConcurrentBag<DecisionRow>();
+        var offList = new ConcurrentBag<ReportFinding>();
 
-            if (selected.Action == RulesetAction.Report)
+        await Parallel.ForEachAsync(
+            Appids(selected),
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+            async (appid, token) =>
             {
-                offList.AddRange(await TryAsync(
-                    () => data.ReportFindingsForRoleAsync(appid, Window, cancellationToken),
-                    "report findings") ?? []);
-            }
-        }
+                var decisions = await TryAsync(
+                    () => data.DecisionsForRoleAsync(appid, Window, token), "decisions") ?? [];
+
+                foreach (var decision in decisions.Where(d => !d.Allowed))
+                {
+                    denied.Add(decision);
+                }
+
+                if (selected.Action != RulesetAction.Report)
+                {
+                    return;
+                }
+
+                var findings = await TryAsync(
+                    () => data.ReportFindingsForRoleAsync(appid, Window, token), "report findings") ?? [];
+
+                foreach (var finding in findings)
+                {
+                    offList.Add(finding);
+                }
+            });
 
         Denied = Group(denied.Select(d => (d.Host, 1, d.TimeGenerated)));
         OffList = Group(offList.Select(f => (f.Host, f.Attempts, f.LastSeen)));
@@ -397,7 +419,7 @@ public sealed class RulesetsModel(ConsoleData data, ILogger<RulesetsModel> logge
         catch (Exception e) when (e is not OperationCanceledException)
         {
             logger.LogError(e, "the rulesets surface could not read {What}", what);
-            Error = $"{what} could not be read";
+            _errors.Record(what);
             return default;
         }
     }

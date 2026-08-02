@@ -69,18 +69,56 @@ public sealed class IndexModel(ConsoleData data, ILogger<IndexModel> logger) : P
 
     /// <summary>Set when a source could not be read, so the panel can say so instead of rendering
     /// zeroes — a console that shows "0 denials" because the query failed is worse than one that
-    /// shows nothing.</summary>
-    public string? Error { get; private set; }
+    /// shows nothing. Collected rather than assigned, because the reads run concurrently.</summary>
+    public string? Error => _errors.Message;
+
+    private readonly LoadErrors _errors = new();
 
     public async Task OnGetAsync(CancellationToken cancellationToken)
     {
         ViewData["Title"] = "Overview";
         ViewData["Surface"] = Surface.Overview.Key;
 
-        await LoadPolicyAsync(cancellationToken);
-        await LoadTrafficAsync(cancellationToken);
-        await LoadRuntimeAsync(cancellationToken);
-        await LoadAttentionAsync(cancellationToken);
+        // Eight independent reads, issued together. Serially this page cost the sum of every
+        // upstream call — three sources, each with its own latency — where it now costs the
+        // slowest one. The cache underneath is keyed and concurrency-safe, so overlapping reads
+        // share a fetch rather than duplicating it.
+        TrafficConfigured = data.TrafficIsConfigured;
+
+        var policy = TryAsync(() => data.PolicyAsync(cancellationToken), "policy");
+        var traffic = TrafficConfigured
+            ? TryAsync(() => data.TrafficSummaryAsync(TrafficWindows.Default, cancellationToken), "traffic summary")
+            : Task.FromResult<TrafficSummary?>(null);
+        var denials = TrafficConfigured
+            ? TryAsync(() => data.DenialsAsync(TrafficWindows.Default, cancellationToken), "denials")
+            : Task.FromResult<IReadOnlyList<DecisionRow>?>(null);
+        var scaleSet = TryAsync(() => data.ScaleSetAsync(cancellationToken), "scale set");
+        var pool = TryAsync(() => data.EgressPoolAsync(cancellationToken), "egress pool");
+        var throughput = TryAsync(
+            () => data.MetricAsync(RuntimeMetric.NetworkOut, TimeSpan.FromHours(1), cancellationToken),
+            "throughput");
+        // The two the "worth a look" panel needs. They no longer wait to discover whether policy
+        // could be read: skipping them on that path saved two cached queries on an error path, at
+        // the cost of making every healthy load slower.
+        var findings = TryAsync(
+            () => data.ReportFindingsAsync(TrafficWindows.Default, cancellationToken), "report findings");
+        var challenges = TryAsync(
+            () => data.ChallengeConversionAsync(TrafficWindows.Default, cancellationToken),
+            "challenge conversion");
+
+        await Task.WhenAll(policy, traffic, denials, scaleSet, pool, throughput, findings, challenges);
+
+        Policy = policy.Result;
+        Traffic = traffic.Result;
+        Denials = denials.Result ?? [];
+        ScaleSet = scaleSet.Result;
+        Pool = pool.Result;
+        Throughput = throughput.Result ?? MetricSeries.Empty("Network Out Total", "bytes");
+
+        // Composed last, because it is a reading of the other three rather than a fourth source.
+        Attention = Policy is null
+            ? []
+            : Observations.From(Policy, Denials, findings.Result ?? [], challenges.Result ?? []);
     }
 
     // ---- panel handlers, one per swap target ---------------------------------------------------
@@ -174,7 +212,7 @@ public sealed class IndexModel(ConsoleData data, ILogger<IndexModel> logger) : P
         catch (Exception e) when (e is not OperationCanceledException)
         {
             logger.LogError(e, "the overview could not read {What}", what);
-            Error = $"{what} could not be read";
+            _errors.Record(what);
             return default;
         }
     }

@@ -368,3 +368,56 @@ input.search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1
 td.good { color: var(--allow); }
 td.warn { color: var(--report); }
 td.bad  { color: var(--deny); }
+
+/* ---------------------------------------------------------------------------------------------
+   Loading progress.
+
+   Every request htmx makes on this console goes through a server that may be waiting on Log
+   Analytics or ARM, so "nothing has happened yet" is a state the UI has to be able to show. Until
+   it could, a slow tab switch was indistinguishable from a dead one.
+
+   Indeterminate on purpose: the server is waiting on three upstreams with no shared notion of
+   progress, and a bar that pretended to know how far along it was would be inventing it. htmx
+   adds .htmx-request for exactly the life of the request, so this needs no script — which the
+   CSP requires, since it grants no unsafe-eval.
+
+   Fixed to the viewport top rather than the header, so a panel swap deep in a long page still
+   reports itself somewhere the operator is looking.
+   --------------------------------------------------------------------------------------------- */
+.page-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+.page-progress.htmx-request { opacity: 1; }
+
+.page-progress::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: page-progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes page-progress-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* A sweep that never stops is a poor companion for anyone who finds motion difficult, and this one
+   can run for the length of a Log Analytics query. Still visible, just still. */
+@media (prefers-reduced-motion: reduce) {
+  .page-progress::before {
+    width: 100%;
+    animation: none;
+    background: var(--accent);
+    opacity: 0.6;
+  }
+}

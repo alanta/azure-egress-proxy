@@ -122,8 +122,20 @@ accent hue so policy state reads at a glance rather than requiring the label to 
 | Freshness | `_Freshness` | `FreshnessModel.From(freshness)` or `From((label, freshness), …)` |
 | Sparkline | `_Sparkline` | `ChartModel` — 46px, for a card footer |
 | Metric chart | `_MetricChart` | `ChartModel` — taller, with a baseline, for Runtime |
+| Unavailable | `_Unavailable` | `string?` — renders `Error` as a banner, so a panel that could not be filled never looks like a panel with nothing to report |
 
 Rules for a surface:
+
+- **Load in parallel, and collect failures rather than assigning them.** A surface's reads are
+  independent, so `Task.WhenAll` them: serially, first paint costs the *sum* of every upstream
+  call instead of the slowest one, and this console reads three of them. `ResponseCache` is
+  concurrency-safe and keyed, so overlapping reads share a fetch rather than duplicating it. Use
+  `LoadErrors` for the `Error` property — a plain field written from several tasks reports
+  whichever failure finished last, and an operator told "denials could not be read" has no way to
+  know policy failed too.
+- **Fan-out over subjects is bounded.** `Parallel.ForEachAsync` with a small degree, not one task
+  per subject: the other end is a metered query service and a ruleset's subject list has no
+  ceiling.
 
 - **Never build markup a partial already covers.** Five surfaces inventing their own table is the
   drift this contract exists to prevent.
@@ -135,6 +147,10 @@ Rules for a surface:
 - A surface needing a richer cell — a pill in a column, a row with an `hx-get` — writes that table
   directly with the same CSS classes. Do not grow `TableModel` until it can express arbitrary
   markup.
+
+`_Layout.cshtml` names `hx-indicator="#page-progress"` on `<body>`, and htmx inherits it — so
+every request the console makes, boosted navigation and panel swaps alike, drives the progress bar
+without a surface doing anything. Do not add per-panel spinners on top of it.
 
 Layout comes from `_Layout.cshtml`: sticky 62px header, the pill tab bar as **real routes** under
 `hx-boost`, and `body[data-surface]` selecting the per-surface background tint. Set it from a page

@@ -18,7 +18,20 @@
 @* hx-boost turns the tab bar's ordinary links into partial swaps while keeping them real routes,
    so the console gets deep links and the back button — which the mockup's JS tab switching does
    not. data-surface selects the per-surface background tint. *@
-<body hx-boost="true" data-surface="@current">
+@* hx-indicator is inherited, so naming the bar once on <body> covers every request htmx makes:
+   boosted tab navigation, the traffic filters, the ruleset detail swap, the 60s panel polls. htmx
+   puts .htmx-request on this element for the life of the request and takes it off again, so the
+   bar needs no script of its own — which matters, because the CSP grants no unsafe-eval and the
+   console ships no JavaScript beyond htmx itself.
+
+   Reads as progress, not as a result: the console must never look like it is telling an operator
+   something about their egress posture when it is only telling them it is still fetching. *@
+<body hx-boost="true" data-surface="@current" hx-indicator="#page-progress">
+    @* Decorative, and hidden from assistive technology on purpose: the alternative — a live
+       region holding the word "Loading" — sits in the DOM permanently and gets announced on every
+       page load whether or not anything is loading. Saying it once, untruthfully, is worse than
+       not saying it. The swapped content is what carries the answer. *@
+    <div id="page-progress" class="page-progress" aria-hidden="true"></div>
     <header class="shell">
         <div class="brand">
             <div class="chip" aria-hidden="true">EG</div>

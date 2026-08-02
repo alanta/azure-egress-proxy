@@ -42,6 +42,14 @@ Larger or underspecified items, kept here until they're ready to become issues:
   around. Showing it means reading the load-balancing rule and the instance public IP through
   ARM — a client change, small but real, and worth doing because the value differs per
   deployment and hardcoding it would be wrong for all but one.
+- **A schematic on the console's Runtime surface** — traffic arriving at the load balancer,
+  crossing the nodes, leaving through the addresses in the egress prefix, drawn as one picture
+  instead of four panels. It would say what the panels only imply: that these are stages of one
+  path, and that a number in one of them constrains the others. Asked for in review, and deferred
+  rather than improvised — the mockups are this console's visual specification
+  ([design.md § D9](openspec/changes/management-portal-console/design.md)), so a diagram that
+  replaces working panels deserves one first. The data is already on the surface; this is a design
+  question, not a client change.
 - **Console read auditing.** Sign-ins are Entra's record; what an operator looked at is recorded
   nowhere. Cheap to add, and the kind of thing that is missed until it is needed.
 - **Per-module allowlist blobs** — one blob per team/module with path-scoped RBAC,
