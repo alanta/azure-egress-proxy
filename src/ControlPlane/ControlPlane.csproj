@@ -19,6 +19,7 @@
          parsing), fixed in 2.7.5. Stays on the 2.x line, which is what ASP.NET Core 10 targets. -->
     <PackageReference Include="Microsoft.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" VersionOverride="8.22.0" />
   </ItemGroup>
 
   <ItemGroup>
