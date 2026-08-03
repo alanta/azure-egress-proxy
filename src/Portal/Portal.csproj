@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Portal</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <!-- Deliberately short. The portal is server-rendered Razor with a vendored htmx, so there is
+       no client framework, no npm tree, and no charting library to review: charts are hand-rolled
+       SVG. Azure.Identity gets the portal's own managed-identity token for the control-plane API,
+       ARM, and Log Analytics; the three Azure SDK clients read the deployment's runtime state. -->
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Azure.Monitor.Query" />
+    <PackageReference Include="Azure.ResourceManager.Compute" />
+    <PackageReference Include="Azure.ResourceManager.Network" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Portal.Tests" />
+  </ItemGroup>
+
+</Project>

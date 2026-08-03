@@ -1,0 +1,5 @@
+@model Portal.Components.StatModel
+<div class="stat">
+    <div class="@Model.CssClass">@Model.Value@if (Model.Suffix is not null) { <small>@Model.Suffix</small> }</div>
+    <div class="l">@Model.Label</div>
+</div>

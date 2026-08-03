@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ControlPlane\ControlPlane.csproj" />
+    <ProjectReference Include="..\Portal\Portal.csproj" />
     <ProjectReference Include="..\SampleApp\SampleApp.csproj" />
     <ProjectReference Include="AllowlistSeeder\AllowlistSeeder.csproj" />
   </ItemGroup>

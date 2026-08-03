@@ -1,0 +1,46 @@
+@model Portal.Pages.IndexModel
+@{
+    var traffic = Model.Traffic;
+}
+@* Refreshes against the server-side CACHE, never Azure — several panels times several operators
+   times every-60s is a Log Analytics bill, and it peaks exactly when the whole team is watching
+   the console during an incident (design.md D8 rule 3). *@
+<div hx-get="/?handler=TrafficPanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    <console-card eyebrow="Last 24 hours" title="Traffic" icon="🚦">
+        @if (!Model.TrafficConfigured)
+        {
+            @* Not the same as a quiet window, and the panel must not let the two look alike. *@
+            <div class="note dim">No audit workspace is configured, so no traffic can be read.</div>
+        }
+        else if (traffic is null)
+        {
+            <div class="note dim">The audit workspace could not be read.</div>
+        }
+        else
+        {
+            <div class="stats">
+                <partial name="_Stat" model="@(new StatModel(
+                    traffic.Denials.ToString("N0"), "denied",
+                    traffic.Denials > 0 ? StatTone.Bad : StatTone.Good))" />
+                @* Credentials PRESENTED and rejected — a DECISION row with an empty Role. Not the
+                   407 handshake, which is a separate event type and not a denial. *@
+                <partial name="_Stat" model="@(new StatModel(
+                    traffic.AuthFailures.ToString("N0"), "auth failures",
+                    traffic.AuthFailures > 0 ? StatTone.Warn : StatTone.Good))" />
+                @* Challenged and never once authenticated: the probing signal the 407 rows are
+                   retained for rather than dropped at the DCR. *@
+                <partial name="_Stat" model="@(new StatModel(
+                    traffic.UnconvertedChallenges.ToString("N0"), "probing sources",
+                    traffic.UnconvertedChallenges > 0 ? StatTone.Bad : StatTone.Good))" />
+            </div>
+            <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
+                <div class="eyebrow" style="margin-bottom:7px">Denials per hour</div>
+                <partial name="_Sparkline" model="@(new ChartModel(
+                    Model.DenialsPerHour, "#d1495b", "Denials per hour, last 24 hours"))" />
+                <div style="margin-top:10px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(traffic.Freshness)" />
+                </div>
+            </div>
+        }
+    </console-card>
+</div>

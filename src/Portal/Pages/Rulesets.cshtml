@@ -1,0 +1,11 @@
+@page
+@model Portal.Pages.RulesetsModel
+
+<partial name="_PageHead" model="Model.Head" />
+
+<partial name="_Unavailable" model="Model.Error" />
+
+@* Everything below one target, because selecting a row moves the highlight, the detail panel and
+   the sandbox together. The list inside re-polls on its own, so a 60-second tick cannot wipe a
+   half-typed candidate change out of the sandbox. *@
+<partial name="_RulesetBody" model="Model" />

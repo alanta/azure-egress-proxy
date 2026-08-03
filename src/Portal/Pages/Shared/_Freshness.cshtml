@@ -1,0 +1,5 @@
+@model Portal.Components.FreshnessModel
+@* Stated, never implied. Azure Monitor's grain is one minute, Log Analytics ingestion is minutes,
+   and the portal caches on top of both — so every panel fed by Azure says how old its numbers are
+   rather than letting the operator assume they are current. *@
+<div class="freshness"><span class="dot"></span> @Model.Text</div>

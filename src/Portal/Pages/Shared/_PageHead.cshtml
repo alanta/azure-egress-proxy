@@ -1,0 +1,14 @@
+@model Portal.Components.PageHeadModel
+<div class="pagehead">
+    <div>
+        <h1>@Model.Title</h1>
+        @if (Model.Lede is not null)
+        {
+            <p>@Model.Lede</p>
+        }
+    </div>
+    @if (Model.Freshness is not null)
+    {
+        <partial name="_Freshness" model="Model.Freshness" />
+    }
+</div>

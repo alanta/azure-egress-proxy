@@ -3,6 +3,10 @@ using System.IO;
 var builder = DistributedApplication.CreateBuilder(args);
 
 const string sampleAppId = "11111111-1111-1111-1111-111111111111";
+// The console's own identity. It holds no grant in allowlist/rulesets.json and needs none —
+// every control-plane endpoint it calls consults no verb, which is what makes it safe to give a
+// read-only component broad read access.
+const string portalId = "66666666-6666-6666-6666-666666666666";
 const string azuriteAccountName = "devstoreaccount1";
 const string azuriteAccountKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==";
 const string allowlistContainer = "egress-config";
@@ -66,6 +70,25 @@ builder.AddProject<Projects.ControlPlane>("control-plane")
     .WaitFor(mockIdp)
     .WaitFor(azurite)
     .WaitFor(allowlistSeeder);
+
+// Mode 3: the read-only console. It calls the control plane as ITSELF — locally that means the
+// mock IdP mints it a token for its own appid, exactly as the managed identity would in Azure, so
+// the console exercises the real "portal is a machine caller" path rather than a bypass.
+//
+// The console holds no grant and needs none: every endpoint it uses consults no verb. That is
+// worth seeing locally, because it is the property that makes a read-only console safe to give
+// broad read access to.
+//
+// The Azure-only settings (workspace, subscription, scale set) are deliberately absent: those
+// panels report themselves as unreadable rather than inventing numbers, which is also what an
+// operator would see if the deployment were misconfigured.
+builder.AddProject<Projects.Portal>("portal")
+    .WithEnvironment("CONTROL_PLANE_URL", "http://localhost:5199")
+    .WithEnvironment("CONTROL_PLANE_SCOPE", $"{tokenAudience}/.default")
+    .WithEnvironment("EgressProxy__TokenEndpoint", "http://localhost:18080/token")
+    .WithEnvironment("EgressProxy__ClientId", portalId)
+    .WaitFor(mockIdp)
+    .WaitFor(azurite);
 
 builder.AddProject<Projects.SampleApp>("sample-app")
     .WithEnvironment("EgressProxy__Audience", "egress-proxy")

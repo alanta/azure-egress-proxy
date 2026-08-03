@@ -1,0 +1,35 @@
+@model Portal.Pages.RuntimeModel
+@* Throughput, CPU and availability. Server-rendered SVG, as the mockups are and as ZEP's own
+   MetricChart is — no charting library, so nothing here implies npm in the repo or unsafe-eval in
+   the CSP.
+
+   Each series is fetched under its own error boundary, so a throttled CPU query costs this row one
+   card rather than three. *@
+<div class="grid g3" hx-get="/Runtime?handler=ChartsPanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    @foreach (var chart in Model.Charts)
+    {
+        <console-card eyebrow="@chart.Title">
+            <partial name="_Stat" model="@(new StatModel(chart.Value, chart.Detail, chart.Tone, chart.Suffix))" />
+            <div style="margin-top:10px">
+                <partial name="_MetricChart" model="chart.Chart" />
+            </div>
+            @if (chart.HasSamples)
+            {
+                <div style="margin-top:10px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(chart.Freshness)" />
+                </div>
+            }
+            else
+            {
+                @* No freshness stamp on a series that returned nothing: an empty series is stamped
+                   at the moment of the attempt, and rendering that as "just now" would claim a
+                   recency the data does not have. Azure Monitor does not distinguish these three
+                   cases for us, so the panel does not pretend to either. *@
+                <div class="note dim" style="margin-top:10px">
+                    Nothing was returned for this window — the metric is unconfigured, unreadable,
+                    or the resource is genuinely idle.
+                </div>
+            }
+        </console-card>
+    }
+</div>

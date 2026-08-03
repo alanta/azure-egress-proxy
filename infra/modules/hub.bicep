@@ -10,6 +10,9 @@ param deployerPrincipalId string
 @description('Deploy the control plane (Mode 2). When true, a user-assigned identity is created and becomes the only other writer of the allowlist blobs; the proxy stays read-only.')
 param deployControlPlane bool = false
 
+@description('Deploy the read-only management console (Mode 3). When true, a user-assigned identity is created with Reader + Monitoring Reader on this resource group and NO write role anywhere — in particular no role on the allowlist storage.')
+param deployPortal bool = false
+
 @description('JWKS URL used for proxy identity validation.')
 param jwksUrl string
 
@@ -141,6 +144,51 @@ module controlPlaneIdentity 'br/public:avm/res/managed-identity/user-assigned-id
   params: {
     name: '${namePrefix}-control-plane-uami'
     location: location
+  }
+}
+
+// The console's identity. It lives in the hub because everything it reads is here: the proxy
+// scale set, the egress prefix, the load balancer, and the Log Analytics workspace.
+//
+// It is the single most informative component in the deployment to compromise — policy, traffic
+// and infrastructure through one principal — so what it does NOT hold is as much of the design as
+// what it does. There is deliberately no assignment for it on the allowlist storage account (see
+// the roleAssignments on allowlistStorage below): the portal reaches policy through the
+// control-plane API's read endpoints and cannot touch the blobs at all.
+module portalIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = if (deployPortal) {
+  name: 'portal-uami'
+  params: {
+    name: '${namePrefix}-portal-uami'
+    location: location
+  }
+}
+
+// Reader: the ARM configuration the runtime surface renders — scale-set capacity and instance
+// view, public-IP-prefix consumption, load-balancer shape. Scoped to this resource group and no
+// wider, so the console can see the egress platform and nothing else in the subscription.
+resource portalReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployPortal) {
+  name: guid(resourceGroup().id, 'portal', 'Reader')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'acdd72a7-3385-48ef-bd42-f606fba81ae7'
+    )
+    principalId: deployPortal ? portalIdentity!.outputs.principalId : ''
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Monitoring Reader: the metric series and the KQL over EgressProxy_CL. Reader alone does not
+// grant workspace data access, which is why this is a second assignment rather than an oversight.
+resource portalMonitoringReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployPortal) {
+  name: guid(resourceGroup().id, 'portal', 'Monitoring Reader')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
+    )
+    principalId: deployPortal ? portalIdentity!.outputs.principalId : ''
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -423,3 +471,15 @@ output controlPlaneIdentityResourceId string = deployControlPlane ? controlPlane
 output controlPlaneIdentityClientId string = deployControlPlane ? controlPlaneIdentity!.outputs.clientId : ''
 output controlPlaneIdentityPrincipalId string = deployControlPlane ? controlPlaneIdentity!.outputs.principalId : ''
 output workspaceResourceId string = observability.outputs.workspaceResourceId
+
+// The console's identity, and the names of the four hub resources it reads. Passed through by
+// name rather than resource id because the portal's ARM client composes ids from its own
+// subscription/resource-group configuration.
+output portalIdentityResourceId string = deployPortal ? portalIdentity!.outputs.resourceId : ''
+output portalIdentityClientId string = deployPortal ? portalIdentity!.outputs.clientId : ''
+output portalIdentityPrincipalId string = deployPortal ? portalIdentity!.outputs.principalId : ''
+output proxyPublicIpPrefixName string = proxyPublicIpPrefix.outputs.name
+output proxyLoadBalancerName string = loadBalancerName
+
+// The workspace GUID the Log Analytics query API takes, which is NOT the ARM resource id.
+output workspaceCustomerId string = observability.outputs.workspaceCustomerId

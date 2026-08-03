@@ -1,0 +1,19 @@
+@page
+@model Portal.Pages.RuntimeModel
+
+<partial name="_PageHead" model="@(new PageHeadModel(
+    "Runtime",
+    "The proxy fleet and the addresses it leaves the network from."))" />
+
+<partial name="_Unavailable" model="Model.Error" />
+
+@* The mockup puts a freshness stamp beside the title. Here it sits on each panel instead: the
+   panels refresh independently on their own 60-second triggers and the page head does not, so a
+   stamp up here would quietly go stale — which is the one thing a freshness stamp must never do. *@
+
+<div class="grid g21" style="margin-bottom:16px">
+    <partial name="_RuntimeFleet" model="Model" />
+    <partial name="_RuntimePool" model="Model" />
+</div>
+
+<partial name="_RuntimeCharts" model="Model" />

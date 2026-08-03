@@ -1,0 +1,47 @@
+@model Portal.Pages.IndexModel
+@{
+    var scaleSet = Model.ScaleSet;
+    var pool = Model.Pool;
+}
+<div hx-get="/?handler=RuntimePanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    <console-card eyebrow="Deployment" title="Runtime" icon="🖥️">
+        @if (scaleSet is null && pool is null)
+        {
+            <div class="note dim">The deployment could not be read from Azure.</div>
+        }
+        else
+        {
+            <div class="stats">
+                @if (scaleSet is not null)
+                {
+                    <partial name="_Stat" model="@(new StatModel(
+                        scaleSet.Running.ToString(), "nodes online",
+                        scaleSet.Running == scaleSet.Capacity ? StatTone.Good : StatTone.Warn,
+                        $"/{scaleSet.Capacity}"))" />
+                }
+                @if (pool is not null)
+                {
+                    @* The prefix is the stable set of addresses partners allowlist on their side,
+                       so exhausting it means the next node egresses from an address nobody has
+                       allowlisted — an operational consequence, not a decorative gauge. *@
+                    <partial name="_Stat" model="@(new StatModel(
+                        pool.InUse.ToString(), "egress IPs in use",
+                        pool.UtilisationPercent > 80 ? StatTone.Warn : StatTone.Neutral,
+                        $"/{pool.Capacity}"))" />
+                }
+                <partial name="_Stat" model="@(new StatModel(
+                    Model.Throughput.Latest is { } bytes ? $"{bytes / 1_000_000:N0}" : "—",
+                    "egress volume", StatTone.Neutral, "MB/min"))" />
+            </div>
+            <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
+                @* One-minute samples, and the label says so. Azure Monitor has no finer grain and
+                   the console must not imply that it does. *@
+                <div class="eyebrow" style="margin-bottom:7px">Network out · 1 min samples</div>
+                <partial name="_Sparkline" model="@ChartModel.FromMetric(Model.Throughput, "#5b8def")" />
+                <div style="margin-top:10px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(Model.Throughput.Freshness)" />
+                </div>
+            </div>
+        }
+    </console-card>
+</div>

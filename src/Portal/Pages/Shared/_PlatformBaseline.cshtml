@@ -1,0 +1,44 @@
+@model Portal.Pages.PlatformModel
+@* 10.3. The floor is rendered, never inferred: FallbackView.DenyAll comes from the API, which
+   reports an absent or empty fallback as deny-all, so the console states the platform's own answer
+   rather than guessing one from an empty host list. A configuration view that omits the floor
+   misleads — this card is why the Platform surface is not just the grants table. *@
+<console-card eyebrow="Baseline" title="Traffic matching no ruleset" icon="🧱">
+    @if (Model.Policy is not { } policy)
+    {
+        <div class="note dim">The control plane could not be read.</div>
+    }
+    else
+    {
+        <div style="display:flex; flex-direction:column; align-items:flex-start; gap:12px">
+            @* The mockup enlarges this one pill inline; here it keeps the shared component's size,
+               because a pill that is bigger only on this card is drift, not emphasis. *@
+            <partial name="_Pill" model="@PillModel.For(policy.Fallback)" />
+
+            @if (policy.Fallback.DenyAll)
+            {
+                <p class="note" style="margin:0">
+                    No fallback hosts are configured, so any workload the proxy cannot match to a
+                    ruleset reaches nothing at all. This is also what a workload falls back to the
+                    moment its ruleset is removed.
+                </p>
+            }
+            else
+            {
+                <partial name="_HostList" model="@(new HostListModel(policy.Fallback.AllowedHosts))" />
+                <p class="note" style="margin:0">
+                    Any workload the proxy cannot match to a ruleset reaches these hosts and nothing
+                    else. This is also what a workload falls back to the moment its ruleset is
+                    removed — so a host here is reachable by every unmatched source, not by one
+                    team's workload.
+                </p>
+            }
+
+            @* Same authority story as the grants card, and stated here too because an operator who
+               lands on this card first should not have to infer it. *@
+            <partial name="_Banner" model="@(new BannerModel("🔒",
+                "The fallback is platform-owned and edited outside this portal. Like the grants, "
+                + "the API reads it and never writes it."))" />
+        </div>
+    }
+</console-card>

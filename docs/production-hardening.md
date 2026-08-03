@@ -11,12 +11,48 @@ documented simplification here:
 | Sample app **openly exposed on its ACA external ingress** (no ingress gate — this demo is about *egress*, so ingress is intentionally left simple) | Put a WAF in front (**Front Door Premium + Private Link origin** to an internal-only Container Apps environment — no public origin at all), or restrict ingress and reach the app over private connectivity |
 | One shared allowlist document, centrally written | Per-module blobs with path-scoped RBAC (write isolation), or a validating control-plane API (see [ROADMAP](../ROADMAP.md)) |
 | Sample image in a **Basic ACR** with NSG allows for `AzureContainerRegistry` **and** `Storage.<region>` (below Premium, ACR serves layer data from shared Azure Storage — the Storage allow makes any in-region storage account reachable, softening the egress floor) | **ACR Premium + private endpoint**: pulls stay on the VNet and both NSG allows disappear |
+| Management console on **external ACA ingress**, with an *optional* source-IP allow list (`PORTAL_ALLOWED_SOURCE_IPS`, empty by default so the demo is runnable from a laptop) | Internal-only ingress reached over private connectivity, or Front Door Premium + Private Link as for the sample app — plus Conditional Access on its app registration. It is an admin surface for a security control, not a sample workload |
+| Console sign-in uses an app-registration **client secret**, minted by `deploy.sh` on every run (`az ad app credential reset`) and passed to Bicep as a deployment parameter, where it lands in a container-app secret | A certificate or federated credential instead, held in Key Vault and referenced by the container app, so no secret value ever travels through a deployment parameter or a shell |
+| Console and sample workload **share one Container Apps subnet**, so the `AzureResourceManager` allow the console needs is open to the workload too (an ACA environment takes one subnet, and an NSG rule cannot name a container app) | Put the admin surface in its own environment and subnet, with an NSG that opens ARM to it alone — the console is the only thing here that reads the deployment's own state, and the egress floor should say so |
 | Single region, small VMSS | ≥2 instances across availability zones (already the default here), CPU/connection autoscale, prefix sized for SNAT (64k ports per instance IP) |
 | `encryptionAtHost` defaults **off** (deploys on any subscription without feature registration) | Register `Microsoft.Compute/EncryptionAtHost` and deploy with `encryptionAtHost=true` |
 
 Unchanged from production intent: explicit CONNECT only (no transparent fallback), the
 NSG deny-Internet floor with `defaultOutboundAccess: false`, fail-closed allowlist
 handling, managed-identity-only data plane, structured audit logging.
+
+## The management console concentrates read power
+
+The console ([`src/Portal/`](../src/Portal/), Mode 3's read half) writes nothing. Its identity
+holds `Reader` + `Monitoring Reader` on the hub resource group and **no write role anywhere** — in
+particular no `Storage Blob Data Contributor` on the allowlist container — and the only non-`GET`
+it makes against the control-plane API is `:check`, the dry run. That is a real boundary and it is
+enforced in the deployment, not just in the code.
+
+Read-only is not the same as low-value, though, and this is the part worth designing around: the
+console is the first identity in the deployment that can see **all authored policy, every proxy
+decision, and the deployment's runtime state at once**. Before it, that reach was three sets of
+permissions held by different principals; a person who wanted the whole picture had to hold all
+three. Joining them is precisely what makes the console useful, and precisely what makes it the
+single most informative component to compromise. Every workload's egress profile — who talks to
+which partner, and when they started — is one page.
+
+So treat it as an admin surface, not as a dashboard:
+
+- **Do not widen its Azure roles.** `Reader` + `Monitoring Reader`, scoped to the hub resource
+  group, is the whole grant. A write role on it would also break the invariant in
+  [AGENTS.md](../AGENTS.md) § Invariants, not just the least-privilege story.
+- **Gate reaching it**, per the ingress row above. The platform's built-in authentication runs
+  in front of the container, so an unauthenticated request never reaches the app; that is
+  authentication, not network exposure control, and the two are not substitutes.
+- **Everyone who can sign in sees everything.** There is one audience tier and no per-user
+  scoping — that is a deliberate deferral, because narrower rules need the per-ruleset RBAC model
+  the control plane has not designed yet. Membership of the console's app registration is
+  therefore the access control, and should be reviewed like one.
+- **Its audit trail is Entra's and Azure's**, not the control plane's. Policy changes are audited
+  by the API because they go through the API; *reads* through the console are not audited anywhere
+  in this repo. If who-looked-at-what matters to you, that is a diagnostic-settings and sign-in-log
+  question to answer at deployment time.
 
 ## Idle timeouts — the stale-tunnel contract
 

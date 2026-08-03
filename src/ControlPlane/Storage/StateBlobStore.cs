@@ -7,7 +7,13 @@ using ControlPlane.Model;
 
 namespace ControlPlane.Storage;
 
-public sealed record StateSnapshot(StateDocument State, ETag? ETag);
+/// <summary>
+/// What a read saw, and when. <paramref name="LastModified"/> is the blob's own modification date —
+/// document-scoped, so any ruleset write moves it. It answers "when did the configuration last
+/// change?" and deliberately not "when did THIS ruleset change?", which would need a per-ruleset
+/// stamp the model does not carry. Both are null before the state blob exists.
+/// </summary>
+public sealed record StateSnapshot(StateDocument State, ETag? ETag, DateTimeOffset? LastModified = null);
 
 /// <summary>Raised when the state blob changed under us — the signal the RMW retry loop is built on.</summary>
 public sealed class StatePreconditionFailedException(Exception? inner = null)
@@ -86,7 +92,7 @@ public sealed class StateBlobStore : IStateBlobStore
         {
             var response = await _state.DownloadContentAsync(cancellationToken);
             var state = StateJson.Deserialize<StateDocument>(response.Value.Content.ToString());
-            return new StateSnapshot(state, response.Value.Details.ETag);
+            return new StateSnapshot(state, response.Value.Details.ETag, response.Value.Details.LastModified);
         }
         catch (RequestFailedException e) when (e.Status == 404)
         {

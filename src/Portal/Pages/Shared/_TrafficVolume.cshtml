@@ -1,0 +1,101 @@
+@model Portal.Pages.TrafficModel
+@*
+    8.7 — volume and top talkers, from the CANONICAL-PROXY-CN-CLOSE connection summaries rather than
+    from the decisions. Byte counts are only known once a tunnel closes, so these rows lag the
+    denials above by the life of a connection; a long-lived tunnel contributes nothing until it ends.
+*@
+@{
+    var talkers = Model.Talkers;
+    var bytesOut = talkers.Sum(talker => talker.BytesOut);
+    var bytesIn = talkers.Sum(talker => talker.BytesIn);
+    var connections = talkers.Sum(talker => talker.Connections);
+}
+<div hx-get="@Model.FilterUrl("VolumePanel")" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="margin-top:16px">
+    <console-card eyebrow="Volume" title="What actually moved, and who moved it" icon="📦">
+        @if (!Model.TrafficConfigured)
+        {
+            <div class="note dim">
+                No audit workspace is configured, so no connection summaries can be read. This is not
+                an idle proxy.
+            </div>
+        }
+        else
+        {
+            <div class="stats" style="margin-bottom:16px">
+                <partial name="_Stat" model="@(new StatModel(TrafficFormat.Bytes(bytesOut), "sent to the internet"))" />
+                <partial name="_Stat" model="@(new StatModel(TrafficFormat.Bytes(bytesIn), "received"))" />
+                <partial name="_Stat" model="@(new StatModel(connections.ToString("N0"), "connections closed"))" />
+            </div>
+
+            <div class="tablewrap scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Workload</th>
+                            <th>Governed by</th>
+                            <th>Destination</th>
+                            <th class="num">Out</th>
+                            <th class="num">In</th>
+                            <th class="num">Connections</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (talkers.Count == 0)
+                        {
+                            <tr>
+                                <td class="dim" colspan="6">No connection closed in the @Model.Window.Label().</td>
+                            </tr>
+                        }
+                        @foreach (var talker in talkers)
+                        {
+                            @* The same join as the denials table, so a workload reads the same way
+                               whether it is being refused or moving a terabyte. *@
+                            var ruleset = Model.Policy?.Governing(talker.Role);
+                            <tr>
+                                @if (talker.Role is { Length: > 0 })
+                                {
+                                    <td class="mono" title="@talker.Role">@TrafficFormat.Short(talker.Role)</td>
+                                }
+                                else
+                                {
+                                    <td class="fainter">—</td>
+                                }
+                                <td>
+                                    @if (ruleset is not null)
+                                    {
+                                        <span class="name">@ruleset.Name</span>
+                                        <partial name="_Pill" model="@PillModel.For(ruleset.Action)" />
+                                    }
+                                    else
+                                    {
+                                        <span class="dim">No ruleset</span>
+                                        <span class="pill plain">Fallback</span>
+                                    }
+                                </td>
+                                <td class="mono">@talker.Host</td>
+                                <td class="num">@TrafficFormat.Bytes(talker.BytesOut)</td>
+                                <td class="num">@TrafficFormat.Bytes(talker.BytesIn)</td>
+                                <td class="num">@talker.Connections.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="note" style="margin:14px 0 0">
+                Counted from closed connections, so an open long-lived tunnel contributes nothing
+                until it ends. Volume is not a policy signal on its own — everything here was
+                <strong>allowed</strong>, and a large number is a bandwidth question rather than a
+                security one.
+            </p>
+
+            @if (Model.Summary is not null)
+            {
+                <div style="margin-top:12px">
+                    <partial name="_Freshness" model="@FreshnessModel.From(Model.Summary.Freshness)" />
+                </div>
+            }
+        }
+    </console-card>
+</div>

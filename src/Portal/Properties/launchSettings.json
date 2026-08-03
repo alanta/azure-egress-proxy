@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://localhost:5299",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "CONTROL_PLANE_URL": "http://localhost:5199",
+        "CONTROL_PLANE_SCOPE": "egress-proxy/.default",
+        "EgressProxy__TokenEndpoint": "http://localhost:18080/token",
+        "EgressProxy__ClientId": "66666666-6666-6666-6666-666666666666"
+      }
+    }
+  }
+}

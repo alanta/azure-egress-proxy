@@ -39,7 +39,28 @@ sample_image_source="${SAMPLE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/sa
 deploy_control_plane="${DEPLOY_CONTROL_PLANE:-false}"
 control_plane_image="${CONTROL_PLANE_IMAGE:-}"
 control_plane_image_source="${CONTROL_PLANE_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/control-plane:latest}"
+# Mode 3 (read-only management console) is opt-in on top of Mode 2: it reads the control-plane
+# API, so DEPLOY_PORTAL=true without DEPLOY_CONTROL_PLANE=true is rejected below. Its image is
+# imported into the demo ACR like the others (GHCR is off the egress floor).
+#
+# PORTAL_ALLOWED_SOURCE_IPS is a comma-separated CIDR list, e.g. "203.0.113.0/24". Empty means no
+# network restriction — the console is still behind Entra sign-in, but it is an admin surface for
+# a security control, so restricting it is the production posture.
+deploy_portal="${DEPLOY_PORTAL:-false}"
+portal_image="${PORTAL_IMAGE:-}"
+portal_image_source="${PORTAL_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/portal:latest}"
+portal_allowed_source_ips="${PORTAL_ALLOWED_SOURCE_IPS:-}"
+# The console signs operators in through an Entra app registration, which is not an ARM resource
+# and so cannot be created by the template. Left unset, deploy.sh creates one (see below).
 acr_name="${ACR_NAME:-${name_prefix}acr$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
+# BUILD_IMAGES_LOCALLY=true builds the three platform images from this working tree and pushes
+# them to the demo ACR, instead of importing the published ones from GHCR. That is what you want
+# when the change under test has not been pushed yet — there is no release image to import — and
+# it is the same ACR either way, because the CAE egress floor opens MCR and this registry only.
+# Images are tagged from the git description, so a redeploy of changed code always lands as a new
+# container-app revision rather than silently reusing a cached :latest.
+build_images_locally="${BUILD_IMAGES_LOCALLY:-false}"
+container_cli="${CONTAINER_CLI:-}"
 # Binary delivery. The VM fetches the proxy binary from PROXY_BINARY_URL at boot via
 # a plain (unauthenticated) curl, so it MUST be an http(s):// URL reachable from the
 # proxy subnet — never a local path. Leave PROXY_BINARY_URL unset (the default) to have
@@ -201,6 +222,18 @@ if [[ "$deploy_control_plane" != "true" && "$deploy_control_plane" != "false" ]]
   exit 1
 fi
 
+if [[ "$deploy_portal" != "true" && "$deploy_portal" != "false" ]]; then
+  echo "DEPLOY_PORTAL must be 'true' or 'false' (got '$deploy_portal')." >&2
+  exit 1
+fi
+
+# The console reads policy through the control-plane API and has no other route to it. Deploying
+# it without Mode 2 would produce a console whose policy surfaces are permanently empty.
+if [[ "$deploy_portal" == "true" && "$deploy_control_plane" != "true" ]]; then
+  echo "DEPLOY_PORTAL=true requires DEPLOY_CONTROL_PLANE=true: the console reads policy through the control-plane API." >&2
+  exit 1
+fi
+
 step "Setting up workload identity (setup-identity.sh)"
 "$repo_root/scripts/setup-identity.sh"
 
@@ -274,14 +307,81 @@ import_image() {
   printf '%s' "$target"
 }
 
+# Build one image from this working tree and push it to the demo ACR. Same contract as
+# import_image: everything chatty goes to stderr, the resolved reference is the only thing on
+# stdout, because the call site captures it.
+# Args: <repo name in acr> <dockerfile path>
+build_image() {
+  local repo="$1" dockerfile="$2"
+  local target="${acr_name}.azurecr.io/${repo}:${local_image_tag}"
+
+  info "Building $dockerfile -> $target (linux/amd64)"
+  # --platform is explicit because the Container Apps environment is amd64 and a developer on
+  # arm64 would otherwise push an image that cannot start there, with a runtime error rather
+  # than a build one.
+  "$container_cli" build --platform linux/amd64 -t "$target" -f "$repo_root/$dockerfile" "$repo_root" >&2
+
+  acr_docker_login
+  info "Pushing $target"
+  "$container_cli" push "$target" >&2
+
+  printf '%s' "$target"
+}
+
+# One registry login per run, with the token on stdin rather than in argv — a push credential is
+# a credential (SECURITY_GUIDELINES.md § 1.4), and argv is world-readable through /proc.
+acr_docker_login() {
+  [[ -n "$acr_logged_in" ]] && return 0
+
+  local token
+  info "Signing in to ACR '$acr_name'"
+  token="$(az acr login --name "$acr_name" --expose-token --only-show-errors --query accessToken -o tsv)"
+  printf '%s' "$token" | "$container_cli" login "${acr_name}.azurecr.io" \
+    --username 00000000-0000-0000-0000-000000000000 --password-stdin >&2
+
+  acr_logged_in=1
+}
+
+# Import the published image, or build the local one. The call sites do not care which.
+prepare_image() {
+  local source="$1" repo="$2" dockerfile="$3"
+
+  if [[ "$build_images_locally" == "true" ]]; then
+    build_image "$repo" "$dockerfile"
+  else
+    import_image "$source" "$repo" "$dockerfile"
+  fi
+}
+
 container_registry_name=""
 acr_ready=""
+acr_logged_in=""
+local_image_tag=""
+
+if [[ "$build_images_locally" == "true" ]]; then
+  if [[ -z "$container_cli" ]]; then
+    if command -v docker >/dev/null 2>&1; then container_cli=docker
+    elif command -v podman >/dev/null 2>&1; then container_cli=podman
+    else
+      echo "ERROR: BUILD_IMAGES_LOCALLY=true needs docker or podman on PATH (or set CONTAINER_CLI)." >&2
+      exit 1
+    fi
+  fi
+  # The tag names the commit the image was built from, so a deployed revision is traceable back
+  # to source. A dirty tree gets a timestamp as well: those bytes exist in no commit, and reusing
+  # the clean commit's tag for them would make the registry lie about what is running.
+  local_image_tag="local-$(git -C "$repo_root" rev-parse --short HEAD)"
+  if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=no)" ]]; then
+    local_image_tag="${local_image_tag}-dirty-$(date +%Y%m%d%H%M%S)"
+  fi
+  info "Building images locally with $container_cli, tagged :$local_image_tag"
+fi
 
 if [[ -z "$sample_app_image" ]]; then
   step "Preparing sample-app image in a private ACR"
   container_registry_name="$acr_name"
   ensure_demo_acr
-  sample_app_image="$(import_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
+  sample_app_image="$(prepare_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
 fi
 
 # Mode 2. The control plane is the only writer of the allowlist blobs, so deploying it changes
@@ -291,7 +391,74 @@ if [[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]]; then
   step "Preparing control-plane image in a private ACR"
   container_registry_name="$acr_name"
   ensure_demo_acr
-  control_plane_image="$(import_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
+  control_plane_image="$(prepare_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
+fi
+
+# Mode 3.
+if [[ "$deploy_portal" == "true" && -z "$portal_image" ]]; then
+  step "Preparing management-console image in a private ACR"
+  container_registry_name="$acr_name"
+  ensure_demo_acr
+  portal_image="$(prepare_image "$portal_image_source" portal src/Portal/Dockerfile)"
+fi
+
+# The console's sign-in app registration. Created here rather than in Bicep because an Entra app
+# registration is not an ARM resource. Idempotent: an existing registration with this display name
+# is reused, and a fresh client secret is minted for this deployment.
+portal_auth_client_id="${PORTAL_AUTH_CLIENT_ID:-}"
+portal_auth_client_secret="${PORTAL_AUTH_CLIENT_SECRET:-}"
+
+if [[ "$deploy_portal" == "true" && -z "$portal_auth_client_id" ]]; then
+  step "Preparing the console's Entra app registration"
+  portal_app_name="${name_prefix}-portal-console"
+  portal_auth_client_id="$(az ad app list --display-name "$portal_app_name" --query "[0].appId" -o tsv 2>/dev/null || true)"
+
+  if [[ -z "$portal_auth_client_id" ]]; then
+    portal_auth_client_id="$(az ad app create --display-name "$portal_app_name" --sign-in-audience AzureADMyOrg --query appId -o tsv)"
+    info "Created app registration $portal_app_name ($portal_auth_client_id)"
+  else
+    info "Reusing app registration $portal_app_name ($portal_auth_client_id)"
+  fi
+
+  # An app registration is only half of it. `az ad app create` creates the application object;
+  # signing in additionally needs a service principal — the enterprise application — in this
+  # tenant, and without one every sign-in fails after the credential prompt. It is also the
+  # object the platform team gets assigned to, which the closing message tells you to do.
+  if ! az ad sp show --id "$portal_auth_client_id" --only-show-errors >/dev/null 2>&1; then
+    az ad sp create --id "$portal_auth_client_id" --only-show-errors >/dev/null
+    info "Created the enterprise application for $portal_app_name"
+  fi
+
+  # Container Apps' built-in authentication signs in with response_type=code+id_token — the
+  # hybrid flow — so the registration has to be willing to issue an ID token. Off by default on
+  # a registration created from the CLI, and the resulting failure lands after sign-in, where it
+  # reads as the console rejecting a perfectly good account.
+  az ad app update --id "$portal_auth_client_id" --enable-id-token-issuance true --only-show-errors
+
+  portal_auth_client_secret="$(az ad app credential reset --id "$portal_auth_client_id" --display-name "deploy-$(date +%Y%m%d%H%M%S)" --query password -o tsv)"
+fi
+
+# The client secret travels to `az` in a parameters file, not as a command-line argument:
+# argv is world-readable through /proc for as long as the deployment runs, which is tens of
+# minutes. The file lives in $patch_dir (mktemp -d, mode 700) and goes with it on exit, and the
+# value reaches python through the environment rather than argv for the same reason. The
+# parameter is @secure() in Bicep, so ARM does not keep it in the deployment history either.
+secret_params=()
+if [[ -n "$portal_auth_client_secret" ]]; then
+  portal_secret_file="$patch_dir/portal-auth.parameters.json"
+  PORTAL_AUTH_CLIENT_SECRET_VALUE="$portal_auth_client_secret" python3 - "$portal_secret_file" <<'PY'
+import json, os, sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({
+        "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+        "contentVersion": "1.0.0.0",
+        "parameters": {
+            "portalAuthClientSecret": {"value": os.environ["PORTAL_AUTH_CLIENT_SECRET_VALUE"]},
+        },
+    }, handle)
+PY
+  secret_params=(--parameters "@$portal_secret_file")
 fi
 
 read_json() {
@@ -308,6 +475,14 @@ import json,sys
 pairs=sys.argv[1].split()
 print(json.dumps(dict(p.split("=",1) for p in pairs)))
 PY
+)"
+
+# az takes a Bicep array parameter as JSON on the command line. An empty list means no network
+# restriction, which is the demo default; a non-empty one restricts the console to those ranges.
+portal_allowed_source_ips_json="$(python3 - "$portal_allowed_source_ips" <<'PYEOF'
+import json, sys
+print(json.dumps([r.strip() for r in sys.argv[1].split(",") if r.strip()]))
+PYEOF
 )"
 
 step "Reading identity config from $identity_file"
@@ -339,7 +514,12 @@ az deployment sub create \
     proxyBinarySha256="$proxy_binary_sha256" \
     vmAdminPublicKey="$vm_admin_public_key" \
     deployControlPlane="$deploy_control_plane" \
-    controlPlaneImage="$control_plane_image"
+    controlPlaneImage="$control_plane_image" \
+    deployPortal="$deploy_portal" \
+    portalImage="$portal_image" \
+    portalAllowedSourceIps="$portal_allowed_source_ips_json" \
+    portalAuthClientId="$portal_auth_client_id" \
+  ${secret_params[@]+"${secret_params[@]}"}
 
 step "Reading deployment outputs"
 deployment_output_json="$(az deployment sub show --name "$deployment_name" --query properties.outputs -o json)"
@@ -443,7 +623,35 @@ PY
     --only-show-errors >/dev/null
 fi
 
+portal_url=""
+if [[ "$deploy_portal" == "true" ]]; then
+  portal_url="$(python3 - "$deployment_output_json" <<'PYEOF'
+import json, sys
+doc = json.loads(sys.argv[1])
+print(doc.get("portalUrl", {}).get("value", ""))
+PYEOF
+)"
+
+  # The sign-in callback can only be registered now: it is derived from the container app's FQDN,
+  # which the deployment just assigned. Without it Entra refuses the redirect and sign-in fails
+  # with AADSTS50011 rather than with anything that points at the cause.
+  if [[ -n "$portal_url" && -n "$portal_auth_client_id" ]]; then
+    step "Registering the console's sign-in redirect URI"
+    az ad app update \
+      --id "$portal_auth_client_id" \
+      --web-redirect-uris "${portal_url}/.auth/login/aad/callback" \
+      --only-show-errors
+  fi
+fi
+
 log "Deployment complete"
 echo "Sample app URL: $app_url"
 [ -n "$control_plane_url" ] && echo "Control plane URL: $control_plane_url"
+if [ -n "$portal_url" ]; then
+  echo "Management console: $portal_url"
+  # Nothing in the deployment grants anyone access: the app registration exists, but who may sign
+  # in to it is a decision for the platform team, not for a deploy script.
+  echo "  Sign-in is restricted to your tenant. Assign the platform team to the"
+  echo "  '${name_prefix}-portal-console' enterprise application to let them in."
+fi
 echo "Demo command: scripts/demo.sh \"$app_url\""

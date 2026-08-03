@@ -1,0 +1,136 @@
+@model Portal.Pages.RulesetsModel
+@{
+    // What the candidate keeps: everything typed that the check did not report as new. Rendered
+    // plainly so the additions and removals are the only things that stand out.
+    var unchanged = Model.Check is { } result
+        ? Model.Candidate.Where(h => !result.Added.Contains(h, StringComparer.OrdinalIgnoreCase)).ToList()
+        : new List<string>();
+}
+<div id="ruleset-check">
+    <console-card eyebrow="Dry run" title="Preview a change — nothing is written" icon="🧪">
+        @if (Model.Selected is not { } ruleset)
+        {
+            <div class="note dim">Select a ruleset to compose a candidate change against it.</div>
+        }
+        else
+        {
+            @* The console's ONE non-GET. POST /rulesets/{name}:check runs the same validation and
+               the same onboard gate as a real write and stops before the blob, so a rejection here
+               is a genuine rejection rather than a client-side guess (design.md D3).
+
+               An ordinary form posted by htmx — no hx-vals, no scripted values, nothing that would
+               need unsafe-eval. The antiforgery token travels as a hidden field, which htmx
+               serialises along with the rest. *@
+            <form method="post" asp-antiforgery="true"
+                  hx-post="/Rulesets?handler=Check" hx-target="#ruleset-check" hx-swap="outerHTML">
+                <input type="hidden" name="name" value="@ruleset.Name" />
+
+                <div class="eyebrow" style="margin-bottom:8px">
+                    Candidate allowed hosts — one per line
+                </div>
+                @* A textarea of hosts mirrors both the API's semantics and the file the team keeps
+                   in its repository: a push is a full replace, so what is in this box IS the
+                   ruleset afterwards, not a list of additions. *@
+                <textarea name="hosts" rows="7" aria-label="Candidate allowed hosts"
+                          style="width:100%; font: 500 12px var(--mono); padding:12px 14px; border-radius:13px;
+                                 border:1px solid rgba(255,255,255,.75); background:rgba(255,255,255,.62);
+                                 color:var(--ink); resize:vertical">@Model.CandidateText</textarea>
+
+                <div style="display:flex; align-items:center; gap:12px; margin-top:12px">
+                    <label class="eyebrow" for="candidate-action">Action</label>
+                    @* Defaults to what the ruleset holds now, so an untouched form never proposes a
+                       different posture. Anything unrecognised coming back normalises to enforce. *@
+                    <select id="candidate-action" name="action"
+                            style="font: 500 12px var(--mono); padding:8px 12px; border-radius:10px;
+                                   border:1px solid rgba(255,255,255,.75); background:rgba(255,255,255,.62);
+                                   color:var(--ink)">
+                        @foreach (var action in Enum.GetValues<RulesetAction>())
+                        {
+                            <option value="@action.ToWire()" selected="@(action == Model.CandidateAction)">
+                                @PillModel.For(action).Text
+                            </option>
+                        }
+                    </select>
+                    <button type="submit" class="btn primary">Dry run</button>
+                </div>
+            </form>
+
+            @if (Model.CheckError is { } error)
+            {
+                <div style="margin-top:16px">
+                    <partial name="_Banner" model="@(new BannerModel("⚠️", error))" />
+                </div>
+            }
+            else if (Model.Check is { } check)
+            {
+                <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--line)">
+                    <div class="eyebrow" style="margin-bottom:8px">
+                        Result of <span class="mono" style="text-transform:none; letter-spacing:0">POST /rulesets/@ruleset.Name:check</span>
+                    </div>
+
+                    @if (check.IsEmpty)
+                    {
+                        <div class="note dim" style="margin-bottom:14px">
+                            No change. The candidate is what the ruleset already holds.
+                        </div>
+                    }
+
+                    @* Both halves of the diff, always. A push is a full replace, so a console that
+                       showed only additions would misrepresent what the snippet below does. *@
+                    <div style="margin-bottom:14px">
+                        <partial name="_HostList" model="@(new HostListModel(unchanged, check.Added, check.Removed))" />
+                    </div>
+
+                    <p class="note" style="margin:0 0 14px">
+                        <strong>@check.Added.Count added · @check.Removed.Count removed ·
+                        @check.Bound.Count bound · @check.Unbound.Count unbound.</strong>
+                        This candidate restates hosts and action only, so the subject bindings are
+                        left as they are — which is why nothing is bound or unbound by it.
+                    </p>
+
+                    @if (check.Bound.Count > 0 || check.Unbound.Count > 0)
+                    {
+                        <div class="eyebrow" style="margin-bottom:8px">Subjects</div>
+                        <div style="margin-bottom:14px">
+                            <partial name="_HostList" model="@(new HostListModel([], check.Bound, check.Unbound))" />
+                        </div>
+                    }
+
+                    @if (check.Removed.Count > 0 || check.Unbound.Count > 0)
+                    {
+                        <div style="margin-bottom:14px">
+                            <partial name="_Banner" model="@(new BannerModel("⚠️",
+                                (check.Removed.Count > 0
+                                    ? $"This push removes {check.Removed.Count} host(s). "
+                                    : string.Empty)
+                                + (check.Unbound.Count > 0
+                                    ? $"It unbinds {check.Unbound.Count} subject(s), whose traffic would fall to the fallback. "
+                                    : string.Empty)
+                                + "A push replaces the whole ruleset, so anything missing from the "
+                                + "snippet below stops being reachable for every subject it governs."))" />
+                        </div>
+                    }
+                </div>
+            }
+
+            <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--line)">
+                <div class="eyebrow" style="margin-bottom:8px">Apply from the pipeline</div>
+                @* Copyable, and deliberately a PUT the operator issues rather than a button the
+                   console offers. The portal holds no write role anywhere; this is the audited
+                   machine path, and it is where policy actually changes. *@
+<pre class="snippet"><span class="c"># The pipeline is the source of truth. Commit this to the team's rules</span>
+<span class="c"># file and let CI push it — an edit made outside it would be reverted</span>
+<span class="c"># by the next unrelated deploy, because a push is a full replace.</span>
+curl -X PUT <span class="t">$API</span>/rulesets/@ruleset.Name \
+  -H <span class="s">"Authorization: Bearer $TOKEN"</span> \
+  -H <span class="s">'Content-Type: application/json'</span> \
+  -d <span class="s">'@Model.SnippetBody'</span></pre>
+                <p class="note" style="margin:12px 0 0">
+                    The console never writes. It works the change out and checks it against the
+                    control plane; applying it stays with the pipeline, which is the only path
+                    that is audited and the only one the next deploy will agree with.
+                </p>
+            </div>
+        }
+    </console-card>
+</div>

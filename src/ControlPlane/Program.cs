@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Security.Claims;
 using ControlPlane.Auth;
@@ -79,16 +80,49 @@ if (app.Environment.IsDevelopment())
 
 // Reads are open to any authenticated caller, regardless of RBAC: the egress posture is
 // transparent by design, so any team can see the whole picture. Only writes need a verb.
-app.MapGet("/rulesets", async (RulesetService service, CancellationToken cancellationToken) =>
+app.MapGet("/rulesets", async (HttpResponse response, RulesetService service, CancellationToken cancellationToken) =>
 {
-    var state = await service.ReadStateAsync(cancellationToken);
-    return Results.Ok(new { rulesets = state.Rulesets.OrderBy(r => r.Name, StringComparer.Ordinal) });
+    var snapshot = await service.ReadSnapshotAsync(cancellationToken);
+    StampRecency(response, snapshot);
+    return Results.Ok(new { rulesets = snapshot.State.Rulesets.OrderBy(r => r.Name, StringComparer.Ordinal) });
 }).RequireAuthorization();
 
-app.MapGet("/rulesets/{name}", async (string name, RulesetService service, CancellationToken cancellationToken) =>
+app.MapGet("/rulesets/{name}", async (
+    string name,
+    HttpResponse response,
+    RulesetService service,
+    CancellationToken cancellationToken) =>
 {
-    var state = await service.ReadStateAsync(cancellationToken);
-    return state.Find(name) is { } ruleset ? Results.Ok(ruleset) : NotFound(name);
+    var snapshot = await service.ReadSnapshotAsync(cancellationToken);
+    if (snapshot.State.Find(name) is not { } ruleset)
+    {
+        return NotFound(name);
+    }
+
+    StampRecency(response, snapshot);
+    return Results.Ok(ruleset);
+}).RequireAuthorization();
+
+// Who may change policy. Auth-only and verb-free like the other reads — knowing who holds
+// authority is part of the transparent posture. The API reads grants here; it still never
+// writes them, and there is deliberately no verb-bearing counterpart to this route.
+app.MapGet("/grants", async (HttpResponse response, RulesetService service, CancellationToken cancellationToken) =>
+{
+    var snapshot = await service.ReadSnapshotAsync(cancellationToken);
+    StampRecency(response, snapshot);
+    return Results.Ok(new { grants = snapshot.State.Grants });
+}).RequireAuthorization();
+
+// What sources matching no ruleset may reach. Reported with an explicit deny_all rather than
+// left to the reader to infer from an empty list: absent and empty both mean deny-all, and a
+// view of the configuration that omits the floor is a misleading one.
+app.MapGet("/fallback", async (HttpResponse response, RulesetService service, CancellationToken cancellationToken) =>
+{
+    var snapshot = await service.ReadSnapshotAsync(cancellationToken);
+    var hosts = snapshot.State.Fallback?.AllowedHosts ?? [];
+
+    StampRecency(response, snapshot);
+    return Results.Ok(new { allowedHosts = hosts, denyAll = hosts.Count == 0 });
 }).RequireAuthorization();
 
 // The core verb: onboard if absent, full replace of content if present.
@@ -161,6 +195,30 @@ static object Body(WriteOutcome outcome) => new
     bound = outcome.SubjectDiff?.Added ?? [],
     unbound = outcome.SubjectDiff?.Removed ?? [],
 };
+
+/// <summary>
+/// Stamps a read with the recency of the state document it was served from, so a caller can report
+/// when the configuration last changed without reading the blob itself. It is the whole document's
+/// date: any ruleset write moves it for every read. Both values are absent before the state blob
+/// exists. The API implements no conditional requests — these describe the read, they do not gate it.
+/// </summary>
+static void StampRecency(HttpResponse response, StateSnapshot snapshot)
+{
+    if (snapshot.LastModified is { } modified)
+    {
+        response.Headers.LastModified = modified.ToString("R", CultureInfo.InvariantCulture);
+    }
+
+    if (snapshot.ETag is { } etag)
+    {
+        // Storage hands back an already-quoted value; the tests' fake does not. An unquoted
+        // ETag header is malformed, so quote what is not already an entity tag.
+        var value = etag.ToString();
+        response.Headers.ETag = value.StartsWith('"') || value.StartsWith("W/", StringComparison.Ordinal)
+            ? value
+            : $"\"{value}\"";
+    }
+}
 
 static IResult Problem(PolicyError error) =>
     Results.Problem(detail: error.Message, statusCode: (int)error.Status);

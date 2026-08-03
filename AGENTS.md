@@ -26,6 +26,7 @@ decision.
 | Allowlist schema, semantics, `action` modes, fallback | [docs/allowlist.md](docs/allowlist.md) | `allowlist/allowlist.schema.json` |
 | Auth, tokens, JWKS, identity modes, the 407 handshake | [docs/identity.md](docs/identity.md) | `proxy/main.go`, `src/EgressProxy.Client/` |
 | Control-plane API, rulesets, RBAC verbs, onboarding | [docs/control-plane.md](docs/control-plane.md), [docs/allowlist.md](docs/allowlist.md) § Write path | `src/ControlPlane/`, `allowlist/rulesets.schema.json` |
+| The management console — surfaces, data clients, the design system | [src/Portal/README.md](src/Portal/README.md), [docs/control-plane.md](docs/control-plane.md) § The management console | `src/Portal/`, `src/Portal.Tests/` |
 | Logging, DCR, KQL, the audit table | [docs/observability.md](docs/observability.md) | `infra/modules/` |
 | Bicep, networking, NSG, VMSS, deployment | [infra/README.md](infra/README.md), [docs/architecture.md](docs/architecture.md) | `infra/`, `scripts/` |
 | The .NET client library or sample app | [src/README.md](src/README.md), [docs/identity.md](docs/identity.md) | `src/EgressProxy.Client/`, `src/SampleApp/` |
@@ -51,9 +52,10 @@ Two documents are easy to miss and answer most "is this a bug?" questions:
 |---|---|
 | `proxy/` | The proxy. Go, single static binary, embeds Smokescreen. Managed mode (blob watch → render ACL → in-process reload) is in `managed.go` |
 | `src/ControlPlane/` | Optional validating write API (Mode 2) — renders `allowlist.json` from rulesets |
+| `src/Portal/` | Optional read-only management console (Mode 3, read half) — Razor Pages + vendored htmx; joins policy, decisions, and runtime state. Writes nothing |
 | `src/EgressProxy.Client/` | Lift-ready .NET client: proxy + managed-identity credential wiring |
 | `src/SampleApp/`, `src/ServiceDefaults/` | Demo workload and shared telemetry/resilience setup |
-| `src/AppHost/` | Aspire local stack: proxy + Azurite + mock IdP + sample + control plane |
+| `src/AppHost/` | Aspire local stack: proxy + Azurite + mock IdP + sample + control plane + console |
 | `mock-idp/` | Local stand-in for the Entra token endpoint and JWKS (Python) |
 | `allowlist/` | The allowlist document and the ruleset document, each with a JSON Schema |
 | `infra/`, `scripts/` | Bicep (AVM modules) and the deploy/teardown/demo/identity scripts |
@@ -87,6 +89,15 @@ deny-Internet NSG floor is what makes the proxy the only route out.
 **Control-plane authorization.** Writer ≠ subject (a workload can never widen its own
 allowlist). Subjects are write-once at onboard and belong to at most one ruleset. Pushes are
 audited full-replace.
+
+**The control-plane API is a machine interface.** Its shape is owed to pipelines, not to a UI —
+do not reshape an endpoint, a status code, or a response body to make a screen easier to build.
+Human identity lives in the console (`src/Portal/`) and nowhere else; the API's identity model
+stays one RS256/JWKS check over service-principal tokens. The console reads that API and renders
+a *candidate* change; applying policy stays with the audited machine path, so it holds `Reader` +
+`Monitoring Reader` and no write role anywhere, and `POST /rulesets/{name}:check` — the dry run —
+is the only non-`GET` it may ever make. Giving the console a write is not a UI change; it is a
+change to who can widen an allowlist.
 
 **The rendered `allowlist.json` schema is a contract.** Mode 2 renders one `modules[]` entry
 per subject precisely so the proxy does not have to change. Do not alter the rendered shape

@@ -52,6 +52,10 @@ public sealed class RulesetService(
     public async Task<StateDocument> ReadStateAsync(CancellationToken cancellationToken) =>
         (await store.ReadAsync(cancellationToken)).State;
 
+    /// <summary>The state plus the recency the read endpoints stamp onto their responses.</summary>
+    public Task<StateSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken) =>
+        store.ReadAsync(cancellationToken);
+
     /// <summary>
     /// Onboard if absent, full-replace of content if present. Full replace is desired-state: the
     /// team's repo holds the rules file, the pipeline pushes it, so a host absent from the push is

@@ -1,0 +1,30 @@
+@page
+@model Portal.Pages.LookupModel
+
+<partial name="_PageHead" model="@(new PageHeadModel(
+    "Lookup",
+    "Paste a workload identity or a hostname and find out what applies to it."))" />
+
+<partial name="_Unavailable" model="Model.Error" />
+
+<div class="card" style="margin-bottom:16px">
+    @* Live search with no client state and no scripted values: htmx sends the input's own value
+       because it is named, so the whole affordance is one hx-get. The scripted-value and inline-
+       handler alternatives both need unsafe-eval, which the console's CSP does not grant
+       (design.md D8 rule 1). *@
+    <input class="search" name="q" value="@Model.Query"
+           aria-label="Workload identity or hostname" spellcheck="false" autocomplete="off"
+           placeholder="Client ID, source CIDR, or hostname"
+           hx-get="/Lookup?handler=Resolve"
+           hx-trigger="input changed delay:300ms"
+           hx-target="#lookup-result"
+           hx-swap="innerHTML" />
+    <div class="legend" style="margin-top:10px">
+        <span>Accepts a managed-identity client ID, a source CIDR, or a hostname.</span>
+    </div>
+</div>
+
+@* Only the answer swaps, so the box keeps focus and the caret between keystrokes. *@
+<div id="lookup-result">
+    <partial name="_LookupResult" model="Model" />
+</div>

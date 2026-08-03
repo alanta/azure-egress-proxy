@@ -1,0 +1,24 @@
+# Build outputs must not enter the build context. Each Dockerfile restores from the copied
+# project files and lock files, and then `COPY . .` would overwrite that restore with the host's
+# obj/ — whose package paths do not exist inside the container, which surfaces as NETSDK1064 at
+# publish time. CI never hit it because a fresh checkout has no bin/obj; a developer building the
+# same image locally always does.
+**/bin/
+**/obj/
+**/TestResults/
+
+# Not part of any image, and the first two are large enough to slow every build.
+.git/
+.github/
+.claude/
+.vs/
+.vscode/
+.idea/
+openspec/
+docs/
+mockups/
+
+# Deploy scratch: identity.generated.json holds the demo's principal ids, and nothing in an
+# image should ever be able to read it.
+infra/identity.generated.json
+**/*.log

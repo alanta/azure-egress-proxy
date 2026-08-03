@@ -11,6 +11,13 @@ namespace ControlPlane.Tests;
 /// </summary>
 public sealed class InMemoryStateBlobStore(StateDocument? initial = null) : IStateBlobStore
 {
+    /// <summary>
+    /// The fake's clock. Real blob modification dates have one-second resolution, so a wall clock
+    /// would leave two writes in the same second indistinguishable and the recency test flaky.
+    /// One second per version is deterministic and still exercises the header's granularity.
+    /// </summary>
+    private static readonly DateTimeOffset Epoch = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     private readonly Lock _gate = new();
     private string _state = StateJson.Serialize(initial ?? new StateDocument());
     private ETag _etag = new("0");
@@ -59,7 +66,8 @@ public sealed class InMemoryStateBlobStore(StateDocument? initial = null) : ISta
     {
         lock (_gate)
         {
-            return Task.FromResult(new StateSnapshot(StateJson.Deserialize<StateDocument>(_state), _etag));
+            return Task.FromResult(new StateSnapshot(
+                StateJson.Deserialize<StateDocument>(_state), _etag, Epoch.AddSeconds(_version)));
         }
     }
 

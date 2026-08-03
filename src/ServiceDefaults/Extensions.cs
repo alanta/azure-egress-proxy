@@ -8,6 +8,7 @@ using Microsoft.Extensions.ServiceDiscovery;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Polly.Telemetry;
 
 namespace Microsoft.Extensions.Hosting;
 
@@ -26,6 +27,19 @@ public static class Extensions
         builder.AddDefaultHealthChecks();
 
         builder.Services.AddServiceDiscovery();
+
+        // Quieten the resilience handler's per-attempt telemetry. A handled retry logs at
+        // Warning and the exhausted one at Error, each with the full exception attached —
+        // so one transient failure prints several stack traces for something that is, by
+        // design, recovered from. Polly always attaches the exception when it logs, so the
+        // only way to lose the trace is to not log the event; downgrading these two to Debug
+        // drops them below the default floor while leaving every *other* resilience event at
+        // its own severity. A circuit opening still surfaces, which is the one that means
+        // "stop, this is not transient". The rate lives in the `Polly` meter below.
+        builder.Services.Configure<TelemetryOptions>(telemetry =>
+            telemetry.SeverityProvider = args => args.Event.EventName is "ExecutionAttempt" or "OnRetry"
+                ? ResilienceEventSeverity.Debug
+                : args.Event.Severity);
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
@@ -58,7 +72,13 @@ public static class Extensions
             {
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation();
+                    .AddRuntimeInstrumentation()
+                    // Resilience, as numbers rather than prose. With the per-attempt logs pushed
+                    // to Debug above, this meter is what carries the signal:
+                    // `resilience.polly.strategy.events` counts retries by event name, and
+                    // `resilience.polly.pipeline.duration` shows what they cost. "Retries are
+                    // happening, and how often" is a rate; it was never a log line.
+                    .AddMeter("Polly");
             })
             .WithTracing(tracing =>
             {

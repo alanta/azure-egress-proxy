@@ -1,0 +1,30 @@
+@model Portal.Pages.IndexModel
+<div hx-get="/?handler=AttentionPanel" hx-trigger="every 60s" hx-swap="outerHTML">
+    @* The title is load-bearing copy, not decoration. The console does not page anyone and has no
+       notion of "wrong"; it reports what the data says and leaves the judgement to the operator. *@
+    <console-card eyebrow="Worth a look" title="Nothing here is an alert — these are observations" icon="👀">
+        <div class="attention">
+            @foreach (var observation in Model.Attention)
+            {
+                <div class="att-row">
+                    <div class="@observation.LevelClass"></div>
+                    <div class="txt">
+                        <div>
+                            @if (observation.Subject is not null)
+                            {
+                                <span class="name">@observation.Subject</span><span> — </span>
+                            }
+                            <span>@observation.Headline</span>
+                        </div>
+                        <div class="sub">@observation.Detail</div>
+                    </div>
+                    <a class="btn" href="@observation.Surface.Path">Inspect</a>
+                </div>
+            }
+            @if (Model.Attention.Count == 0)
+            {
+                <div class="note dim">Nothing to report in this window.</div>
+            }
+        </div>
+    </console-card>
+</div>
