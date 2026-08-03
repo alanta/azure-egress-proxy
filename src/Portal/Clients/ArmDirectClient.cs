@@ -13,8 +13,8 @@ namespace Portal.Clients;
 /// are filed upstream, and <b>this whole file should be deleted when they are fixed</b>; the issue
 /// numbers are on the two methods below so a reader who checks one can find the other.</para>
 ///
-/// <para>Full write-ups, with reproductions that stand alone:
-/// <see href="https://github.com/alanta/azure-egress-proxy/blob/main/AZURE-SDK-ISSUES.md">AZURE-SDK-ISSUES.md</see>.</para>
+/// <para>Each issue below carries a standalone reproduction and the environment it was seen on,
+/// so neither needs anything from this repository to investigate.</para>
 ///
 /// <list type="bullet">
 /// <item><b>The scale set's instance addresses</b>
