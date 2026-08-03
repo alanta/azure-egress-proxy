@@ -705,7 +705,7 @@
           "Azure.Storage.Blobs": "[12.29.1, )",
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.10, )",
           "Microsoft.AspNetCore.OpenApi": "[10.0.10, )",
-          "Microsoft.OpenApi": "[2.11.0, )",
+          "Microsoft.OpenApi": "[3.9.0, )",
           "Scalar.AspNetCore": "[2.16.16, )",
           "ServiceDefaults": "[1.0.0, )"
         }
@@ -817,9 +817,9 @@
       },
       "Microsoft.OpenApi": {
         "type": "CentralTransitive",
-        "requested": "[2.11.0, )",
-        "resolved": "2.11.0",
-        "contentHash": "/ignjfdeKT2SGLIR7QEv19KnI0rvoxRG/TYDOZdK9EsWLjKK9IK8i1Mo5NRm9PRV3i64DzlTqnIflWvoyfljLg=="
+        "requested": "[3.9.0, )",
+        "resolved": "3.9.0",
+        "contentHash": "2sDK6AFY1L/Xg8JvwlaDoPwzGqCftjUgHG2NhCy8gNV/1v4eXziYoH39e/pwC7oTBJInuYUUJqfkRpIMPQ/Fyw=="
       },
       "OpenTelemetry.Exporter.OpenTelemetryProtocol": {
         "type": "CentralTransitive",
