@@ -79,6 +79,15 @@ Two amplifiers to be aware of: HTTP-client resilience handlers retry denied requ
 knowing the proxy credentials (e.g. a telemetry exporter missing from `NO_PROXY`) will
 generate a persistent stream of challenge rows that never converts.
 
+Those retries are deliberately quiet on the *client* side. Polly logs a handled retry at
+Warning and the exhausted attempt at Error, each carrying the full exception, so a single
+transient failure printed several stack traces into a console. `ServiceDefaults` downgrades
+the `ExecutionAttempt` and `OnRetry` events to Debug and exports the `Polly` meter instead —
+`resilience.polly.strategy.events` counts retries, `resilience.polly.pipeline.duration` shows
+what they cost. Every other resilience event keeps its own severity, so a circuit opening is
+still logged. If you are chasing a retry storm, query the metric; the proxy-side row count in
+`EgressProxy_CL` is the other half of the same picture.
+
 Two operational notes:
 
 - **Across a rollout**, instances still running an older binary keep folding these into

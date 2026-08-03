@@ -18,7 +18,6 @@
          version carries GHSA-v5pm-xwqc-g5wc (high — circular schema references terminate
          parsing), fixed in 2.7.5. Stays on the 2.x line, which is what ASP.NET Core 10 targets. -->
     <PackageReference Include="Microsoft.OpenApi" />
-    <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="Scalar.AspNetCore" />
   </ItemGroup>
 
