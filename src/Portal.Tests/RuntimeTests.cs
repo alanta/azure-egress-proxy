@@ -146,6 +146,48 @@ public class RuntimeTests
         }
     }
 
+    /// <summary>
+    /// Half-read is not healthy either. One load-balancer metric answering 100% while the other
+    /// returns nothing is a stage the console can only partly see — green there would claim an
+    /// assurance it does not have, for the same reason a node without a health verdict is not a
+    /// healthy node.
+    /// </summary>
+    [Fact]
+    public void A_stage_the_console_can_only_half_read_does_not_read_as_healthy()
+    {
+        var half = RuntimeModel.Derive(loadBalancer:
+        [
+            RuntimeModel.Signal("Data path", Series(100, 100, 100),
+                "Available", "Degraded", "Unavailable"),
+            RuntimeModel.Signal("Health probes", Series(),
+                "All probes passing", "Some probes failing", "All probes failing"),
+        ]);
+
+        Assert.NotEqual(LampState.Ok, half.LoadBalancerLamp);
+        // Still a reading, though: hatching the station would discard the half that answered.
+        Assert.NotEqual(LampState.Unread, half.LoadBalancerLamp);
+        Assert.False(half.LoadBalancerStage.Unread);
+    }
+
+    /// <summary>
+    /// The readout's line carries the same allow/report/deny ramp as the pill beside it, because
+    /// the two are one statement about health drawn twice — a blue line under an amber pill reads
+    /// as two unrelated facts. This is the mockup's own behaviour.
+    /// </summary>
+    [Theory]
+    [InlineData(100, "#2f9e6b")]
+    [InlineData(66, "#d98324")]
+    [InlineData(0, "#d1495b")]
+    public void A_load_balancer_readout_draws_its_line_in_the_colour_of_its_reading(
+        double latest,
+        string colour)
+    {
+        var signal = RuntimeModel.Signal("Health probes", Series(latest, latest, latest),
+            "All probes passing", "Some probes failing", "All probes failing");
+
+        Assert.Equal(colour, signal.Track.Colour);
+    }
+
     // ---- the schematic: ducts ------------------------------------------------------------------
 
     /// <summary>

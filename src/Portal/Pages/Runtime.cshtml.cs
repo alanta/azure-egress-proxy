@@ -124,9 +124,21 @@ public sealed class RuntimeModel(ConsoleData data, RuntimeOptions deployment, IL
         get
         {
             var readable = LoadBalancer.Where(signal => signal.HasSamples).ToList();
-            return readable.Count == 0
-                ? LampState.Unread
-                : readable.Select(SignalLamp).Max();
+            if (readable.Count == 0)
+            {
+                return LampState.Unread;
+            }
+
+            var worst = readable.Select(SignalLamp).Max();
+
+            // Half-read is not healthy either. The data path answering 100% while the probe metric
+            // returns nothing is a stage the console can only partly see, and green would claim an
+            // assurance it does not have — the same reason a node without a health verdict does not
+            // read as a healthy node. Not Unread: there IS a reading, and hatching the station would
+            // discard it.
+            return readable.Count < LoadBalancer.Count && worst is LampState.Ok
+                ? LampState.Warn
+                : worst;
         }
     }
 
@@ -955,9 +967,22 @@ public sealed record LoadBalancerSignal(
     /// <summary>A line on a track, not a filled area: these series sit at 100 nearly always, and a
     /// filled chart pinned at its own maximum reads as a progress bar, which is a different
     /// claim.</summary>
+    /// <remarks>
+    /// The line takes the same allow/report/deny ramp as the pill beside it, which is what the
+    /// mockup does. It is the one place on this console where a series' colour is its <i>reading</i>
+    /// rather than its <i>identity</i> — denials are always deny-red, throughput always accent — and
+    /// it earns the exception because the whole readout is one statement about health, drawn twice.
+    /// A blue line under an amber pill reads as two unrelated facts.
+    /// </remarks>
     public ChartModel Track => new(
         [.. Series.Points.Select(point => point.Value ?? 0)],
-        "#5b8def",
+        Pill.Variant switch
+        {
+            "enforce" => "#2f9e6b",
+            "report" => "#d98324",
+            "open" => "#d1495b",
+            _ => "#6a7287",
+        },
         $"{Label}, 1-minute samples, last hour",
         260,
         24);
