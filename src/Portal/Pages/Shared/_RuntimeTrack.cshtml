@@ -1,0 +1,16 @@
+@model Portal.Components.ChartModel
+@* A line on a track, no fill.
+
+   These series sit at 100 nearly always, and a filled chart pinned at its own maximum reads as a
+   progress bar — a different claim from a history. The number and its recency are stated in the
+   readout's own text, so the shape is decoration here and is hidden from assistive technology. *@
+@if (Model.HasData)
+{
+    <div class="sx-track">
+        <svg viewBox="0 0 @Model.Width @Model.Height" width="100%" height="@Model.Height"
+             preserveAspectRatio="none" aria-hidden="true">
+            <path d="@Model.LinePath" fill="none" stroke="@Model.Colour" stroke-width="1.5"
+                  stroke-linejoin="round"></path>
+        </svg>
+    </div>
+}

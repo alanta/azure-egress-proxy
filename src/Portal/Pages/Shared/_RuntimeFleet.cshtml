@@ -2,74 +2,93 @@
 @{
     var scaleSet = Model.ScaleSet;
 }
-@* Refreshes against the server-side CACHE, never Azure (design.md D8 rule 3). Sixty seconds is
-   also Azure Monitor's grain, so the poll lands on new data rather than re-reading the same
-   sample faster than it can change. *@
-<div hx-get="/Runtime?handler=FleetPanel" hx-trigger="every 60s" hx-swap="outerHTML">
-    <console-card eyebrow="Scale set" title="@Model.FleetTitle" icon="🖥️">
+@*  Swap target 2 of 4: the LB→scale-set duct, the scale-set station, the node lane with its two
+    gauges, and the trend recorder along the foot of the card.
+
+    The recorder is a scale-set metric under a path-level label: "throughput leaving the prefix" is
+    what an operator wants to read and `Network Out Total` on the VMSS is what Azure measures. They
+    are the same bytes, which is why the copy stands and why this target owns it (design.md, Open).
+
+    `display: contents` — see _RuntimeLoadBalancer for why. Refreshes against the cache. *@
+<div hx-get="/Runtime?handler=FleetStage" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="display:contents">
+    <partial name="_RuntimeDuct" model="Model.PoolDuct" />
+    <partial name="_RuntimeStation" model="Model.FleetStage" />
+
+    <div class="sx-lane a-vmss">
+        <div class="sx-lane-tag">Nodes · ARM instance view</div>
         @if (scaleSet is null)
         {
-            @* Not "zero nodes". A panel that rendered zeroes here would read as an outage; this is
+            @* Not "zero nodes". A lane that rendered zeroes here would read as an outage; this is
                the console saying it cannot see, which is a different thing entirely. *@
             <div class="note dim">
                 The proxy scale set is not configured for this deployment, or is not readable by the
                 portal's identity.
             </div>
         }
+        else if (scaleSet.Instances.Count == 0)
+        {
+            <div class="note dim">The scale set reports no instances.</div>
+        }
         else
         {
-            <div class="instances">
+            <div class="sx-nodes">
                 @foreach (var node in scaleSet.Instances)
                 {
-                    <div class="inst">
-                        @* The dot is the first thing scanned down the list, so a node that is not
-                           powered on must not be wearing the healthy colour. *@
-                        <span class="st" style="background:@RuntimeModel.PowerColour(node)"
-                              title="@RuntimeModel.PowerLabel(node)"></span>
-                        <span class="mono" style="flex:1">@RuntimeModel.NodeName(scaleSet, node)</span>
-                        <span class="dim">@RuntimeModel.ImageLabel(node)</span>
-                        @if (node.ProvisioningState is { } state
-                            && !string.Equals(state, "Succeeded", StringComparison.OrdinalIgnoreCase))
-                        {
-                            <span class="pill report">@state</span>
-                        }
-                        @* The instance-level public IP: the address a partner actually sees. *@
-                        @if (node.PublicIp is { } address)
-                        {
-                            <span class="mono dim">@address</span>
-                        }
-                        else
-                        {
-                            <span class="dim">no address readable</span>
-                        }
-                        <partial name="_Pill" model="@RuntimeModel.Health(node)" />
+                    <div class="sx-node">
+                        <div class="hd">
+                            @* The lamp is the first thing scanned down the list, so a node that is
+                               not powered on — or that reports no verdict at all — must not be
+                               wearing the healthy colour. *@
+                            <span class="sx-lamp sm @RuntimeModel.LampClass(RuntimeModel.NodeLamp(node))"
+                                  title="@RuntimeModel.PowerLabel(node)"></span>
+                            <span class="nm" title="@RuntimeModel.NodeName(scaleSet, node)">@RuntimeModel.NodeName(scaleSet, node)</span>
+                            @if (node.ProvisioningState is { } state
+                                && !string.Equals(state, "Succeeded", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="pill report">@state</span>
+                            }
+                            <partial name="_Pill" model="@RuntimeModel.Health(node)" />
+                        </div>
+                        @* The instance-level public IP is the address a partner actually sees, so
+                           it gets its own line rather than competing with the health pill for the
+                           end of a single one. *@
+                        <div class="sub">
+                            @RuntimeModel.ImageLabel(node) · @(node.PublicIp ?? "no address readable")
+                        </div>
                     </div>
                 }
-                @if (scaleSet.Instances.Count == 0)
-                {
-                    <div class="note dim">The scale set reports no instances.</div>
-                }
             </div>
-            <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line)">
-                @* The load balancer, from Azure Monitor rather than from the proxy — data-path
-                   availability and health-probe status, each on its own 1-minute sample. *@
-                <dl class="kv">
-                    @foreach (var signal in Model.LoadBalancer)
-                    {
-                        <dt>@signal.Label</dt>
-                        <dd>
-                            <partial name="_Pill" model="signal.Pill" />
-                            <span class="dim">@signal.Detail</span>
-                        </dd>
-                    }
-                </dl>
-            </div>
-            @if (Model.FleetFreshness is { } freshness)
-            {
-                <div style="margin-top:12px">
-                    <partial name="_Freshness" model="freshness" />
-                </div>
-            }
         }
-    </console-card>
+
+        @* CPU and VM availability, both from Azure Monitor — so they still render when ARM did not
+           answer and the station above them is hatched. *@
+        <div class="sx-gauges">
+            <div class="sx-gauge">
+                <div class="eyebrow">CPU</div>
+                <div class="n @Model.Cpu.ToneClass">@Model.Cpu.Value<small>@Model.Cpu.Suffix</small></div>
+                <div class="sx-mini"><partial name="_RuntimeGraph" model="Model.Cpu.Chart" /></div>
+                <div class="dt">@Model.Cpu.Detail</div>
+            </div>
+            <div class="sx-gauge">
+                <div class="eyebrow">Availability</div>
+                <div class="n @Model.Availability.ToneClass">@Model.Availability.Value<small>@Model.Availability.Suffix</small></div>
+                <div class="sx-mini"><partial name="_RuntimeGraph" model="Model.Availability.Chart" /></div>
+                <div class="dt">@Model.Availability.Detail</div>
+            </div>
+        </div>
+
+        @if (Model.FleetFreshness is { } freshness)
+        {
+            <partial name="_Freshness" model="freshness" />
+        }
+        else if (Model.Cpu.HasSamples || Model.Availability.HasSamples)
+        {
+            @* No fleet stamp when ARM did not answer — but the gauges did, and saying so is the
+               difference between "unread" and "nothing is happening". *@
+            <div class="note dim" style="margin:0">Both series come from Azure Monitor, which answered.</div>
+        }
+    </div>
+
+    <partial name="_RuntimeRecorder" model="Model.Throughput" />
 </div>

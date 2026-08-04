@@ -1,0 +1,50 @@
+@model Portal.Pages.RuntimeModel
+@*  Swap target 1 of 4: the inlet duct, the load-balancer station, and the lane beneath it.
+
+    The wrapper is `display: contents`, so it disappears from layout while its three children are
+    still placed by the schematic's own grid — one htmx target can therefore own a station in the
+    process line and a lane in the deck even though the grid puts them in different rows
+    (design.md D1). It is a plain div with no semantics, which is the case where `display: contents`
+    is uncontroversial.
+
+    Refreshes against the server-side CACHE, never Azure. Sixty seconds is also Azure Monitor's
+    grain, so the poll lands on new data rather than re-reading the same sample faster than it can
+    change. *@
+<div hx-get="/Runtime?handler=LoadBalancerStage" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="display:contents">
+    <partial name="_RuntimeDuct" model="Model.InletDuct" />
+    <partial name="_RuntimeStation" model="Model.LoadBalancerStage" />
+
+    <div class="sx-lane a-lb">
+        <div class="sx-lane-tag">Load balancer · Azure Monitor</div>
+        @foreach (var signal in Model.LoadBalancer)
+        {
+            <div class="sx-ro">
+                <div class="hd">
+                    <span class="l">@signal.Label</span>
+                    <partial name="_Pill" model="signal.Pill" />
+                </div>
+                @* Both metrics already arrive as a full hour and everything but the latest sample
+                   used to be discarded. Drawing them turns "66%" into "since when", at no extra
+                   query. *@
+                <partial name="_RuntimeTrack" model="signal.Track" />
+                <div class="dt">@signal.Detail</div>
+            </div>
+        }
+        @if (Model.LoadBalancerFreshness is { } freshness)
+        {
+            <partial name="_Freshness" model="freshness" />
+        }
+        else
+        {
+            @* No stamp on a series that returned nothing: an empty series is stamped at the moment
+               of the attempt, and rendering that as "just now" would claim a recency the data does
+               not have. *@
+            <div class="note dim" style="margin:0">
+                Neither metric returned samples — the load balancer is unconfigured, or not readable
+                by the portal's identity. This is not the same as a load balancer reporting itself
+                healthy.
+            </div>
+        }
+    </div>
+</div>

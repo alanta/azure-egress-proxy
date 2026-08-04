@@ -1,9 +1,13 @@
 /* ==========================================================================================
    The egress console stylesheet.
 
-   Ported from openspec/changes/management-portal-console/mockups/portal.html, which is the
-   visual specification for every surface — where this file and the mockup disagree about
-   layout, the mockup wins.
+   Ported from two mockups, each the visual specification for what it covers — where this file
+   and a mockup disagree about layout, the mockup wins:
+
+     - openspec/changes/archive/2026-08-03-management-portal-console/mockups/portal.html — the
+       design language and every surface's layout;
+     - openspec/changes/runtime-path-schematic/mockups/runtime.html — the Runtime surface as one
+       schematic, which is the .sx-* block at the foot of this file.
 
    The design language is inherited from the ZEP project (~/Projects/Zure/zep), OUTSIDE this
    repository, so it cannot be found by searching here: the glass card treatment, the 62px
@@ -421,3 +425,229 @@ td.bad  { color: var(--deny); }
     opacity: 0.6;
   }
 }
+
+
+/* ==========================================================================================
+   The Runtime surface as one schematic.
+
+   Ported from openspec/changes/runtime-path-schematic/mockups/runtime.html, in that mockup's
+   order and with its comments.
+
+   Replaces the five panels (fleet, egress addresses, network out, CPU, availability) with a
+   single card that draws the path traffic actually takes: load balancer → scale set → IP
+   prefix → partner. Every number the panels carried is still here; it is now attached to the
+   stage it describes, so the constraint between stages is visible rather than inferred.
+
+   Nothing below overrides the rules above it. The tokens, glass treatment, pills, stats, pool
+   chips, legend, banner and freshness stamp are all the existing ones.
+
+   One difference from the mockup, and only one: the mockup inlines its Azure icons, because a
+   generator can namespace their gradient ids; the console serves them from wwwroot as <img>,
+   where each SVG document scopes its own ids and four on a page cannot collide (design.md D6).
+   `.azicon` therefore sizes an <img> directly, and the `.azicon svg` rule below is for the one
+   icon that stays inline — the hand-drawn globe at the partner end of the path.
+   ========================================================================================== */
+
+.sx-card { padding: 22px 24px 24px; }
+
+.sx-head { display: flex; align-items: flex-start; justify-content: space-between;
+           gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+.sx-title { margin-top: 3px; font-size: 14px; font-weight: 620; letter-spacing: -.01em;
+            text-wrap: balance; max-width: 70ch; }
+
+/* The process line and the instrument deck share one grid, so a lane sits under its station. */
+.sx {
+  display: grid;
+  grid-template-columns:
+    68px 60px minmax(0, 1fr) 60px minmax(0, 1.52fr) 60px minmax(0, 1.18fr) 60px 68px;
+  grid-template-rows: auto 20px auto auto auto;
+}
+
+/* ------------------------------------------------------------------ stations */
+.sx-station {
+  grid-row: 1; position: relative; z-index: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 11px 13px 13px; border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.74);
+  background: linear-gradient(135deg, rgba(255,255,255,.76), rgba(255,255,255,.48));
+  box-shadow: 0 12px 26px -22px rgba(40,52,96,.65);
+}
+.sx-station.a-lb   { grid-column: 3; }
+.sx-station.a-vmss { grid-column: 5; }
+.sx-station.a-pip  { grid-column: 7; }
+
+.sx-top { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.azicon { width: 26px; height: 26px; flex: none; display: block; }
+.azicon.sm { width: 21px; height: 21px; }
+.azicon svg { width: 100%; height: 100%; display: block; }
+
+.sx-id { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sx-tag { font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: .14em; color: var(--faint); }
+.sx-name { font-family: var(--mono); font-size: 11px; color: var(--ink);
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sx-read { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.sx-read .n { font-size: 22px; font-weight: 680; letter-spacing: -.02em; line-height: 1;
+              font-variant-numeric: tabular-nums; }
+.sx-read .u { font-size: 11px; color: var(--muted); }
+.sx-sub { font-size: 11px; color: var(--muted); line-height: 1.45; }
+
+/* "Cannot see" is a third state, never a healthy one — so it is hatched and unlit. */
+.sx-station.blind { border-style: dashed; border-color: rgba(106,114,135,.38); box-shadow: none;
+  background: repeating-linear-gradient(45deg,
+      rgba(106,114,135,.06) 0 6px, rgba(255,255,255,.46) 6px 12px); }
+.sx-station.blind .azicon { filter: grayscale(1); opacity: .5; }
+.sx-blindnote { font-family: var(--mono); font-size: 10px; font-weight: 700;
+                text-transform: uppercase; letter-spacing: .12em; color: var(--faint);
+                padding: 6px 0 2px; }
+
+/* ---------------------------------------------------------------------- lamps */
+.sx-lamp { position: absolute; top: 13px; right: 13px; width: 9px; height: 9px;
+           border-radius: 50%; flex: none; }
+.sx-lamp.sm { position: static; width: 7px; height: 7px; box-shadow: none; }
+.sx-lamp.ok   { background: var(--allow);  box-shadow: 0 0 0 3px rgba(47,158,107,.16); }
+.sx-lamp.warn { background: var(--report); box-shadow: 0 0 0 3px rgba(217,131,36,.16); }
+.sx-lamp.bad  { background: var(--deny);   box-shadow: 0 0 0 3px rgba(209,73,91,.16); }
+.sx-lamp.off  { background: transparent; border: 1px solid rgba(106,114,135,.55); box-shadow: none; }
+.sx-lamp.sm.ok, .sx-lamp.sm.warn, .sx-lamp.sm.bad { box-shadow: none; }
+
+/* ---------------------------------------------------------------------- pipes */
+.sx-pipe { grid-row: 1; position: relative; z-index: 2; }
+.sx-duct {
+  position: absolute; top: 18px; left: -7px; right: -7px; height: 13px;
+  border-top: 1px solid rgba(28,35,51,.13); border-bottom: 1px solid rgba(28,35,51,.13);
+  background-image:
+    repeating-linear-gradient(90deg, rgba(91,141,239,.30) 0 5px, transparent 5px 13px),
+    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.34));
+  background-size: 13px 100%, auto;
+  animation: sx-flow 1.5s linear infinite;
+}
+.sx-duct::after { content: ""; position: absolute; right: -1px; top: 50%;
+  transform: translateY(-50%); width: 0; height: 0;
+  border-left: 6px solid rgba(28,35,51,.30);
+  border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+@keyframes sx-flow { from { background-position: 0 0, 0 0; } to { background-position: 13px 0, 0 0; } }
+
+.sx-pipe.warn .sx-duct { background-image:
+    repeating-linear-gradient(90deg, rgba(217,131,36,.42) 0 5px, transparent 5px 13px),
+    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.34)); }
+.sx-pipe.bad .sx-duct { animation: none; background-image:
+    repeating-linear-gradient(45deg, rgba(209,73,91,.30) 0 5px, transparent 5px 10px),
+    linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.34));
+  border-color: rgba(209,73,91,.35); }
+.sx-pipe.dead .sx-duct { animation: none; background-image:
+    repeating-linear-gradient(45deg, rgba(106,114,135,.16) 0 4px, transparent 4px 9px),
+    linear-gradient(180deg, rgba(255,255,255,.60), rgba(255,255,255,.30)); }
+.sx-pipe.dead .sx-duct::after { border-left-color: rgba(28,35,51,.14); }
+
+.sx-chip { position: absolute; top: 37px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-family: var(--mono); font-size: 7.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--faint);
+  padding: 2px 5px; border-radius: 999px; background: rgba(255,255,255,.82);
+  border: 1px solid rgba(255,255,255,.9); }
+.sx-pipe.warn .sx-chip { color: var(--report); background: rgba(217,131,36,.14); }
+.sx-pipe.bad .sx-chip  { color: var(--deny);   background: rgba(209,73,91,.14); }
+
+/* ----------------------------------------------------------------------- caps */
+.sx-cap { grid-row: 1; display: flex; flex-direction: column; align-items: center;
+          gap: 7px; padding-top: 9px; }
+.sx-cap .lbl { font-family: var(--mono); font-size: 8px; font-weight: 700; line-height: 1.5;
+               text-transform: uppercase; letter-spacing: .11em; color: var(--faint);
+               text-align: center; }
+
+/* ------------------------------------------------------- the instrument deck */
+.sx-rule  { grid-column: 1 / -1; grid-row: 2; align-self: end; height: 1px; background: var(--line); }
+.sx-riser { grid-row: 2; position: relative; }
+.sx-riser::before { content: ""; position: absolute; left: 17px; top: 4px; bottom: 0;
+                    border-left: 1px dashed rgba(28,35,51,.22); }
+
+.sx-lane { grid-row: 3; min-width: 0; padding: 14px 1px 0;
+           display: flex; flex-direction: column; gap: 12px; }
+.sx-lane.a-lb   { grid-column: 3; }
+.sx-lane.a-vmss { grid-column: 5; }
+.sx-lane.a-pip  { grid-column: 7; }
+.sx-lane-tag { font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+               text-transform: uppercase; letter-spacing: .14em; color: var(--faint); }
+.sx-lane .freshness { margin-top: auto; }
+
+.sx-ro { display: flex; flex-direction: column; gap: 5px; }
+.sx-ro .hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sx-ro .hd .l { font-size: 11.5px; font-weight: 600; }
+.sx-ro .dt { font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+/* The readout series live at 100 nearly always, so they are drawn as a line on a track: a filled
+   chart pinned at its own maximum reads as a progress bar, which is a different claim. */
+.sx-track { border-radius: 7px; padding: 0; overflow: hidden; color: var(--ink);
+            border: 1px solid rgba(255,255,255,.62); background: rgba(255,255,255,.44); }
+.sx-track svg { display: block; }
+.sx-mini { color: var(--ink); }
+
+.sx-nodes { display: flex; flex-direction: column; gap: 7px; }
+.sx-node { display: flex; flex-direction: column; gap: 4px; min-width: 0;
+           padding: 9px 11px; border-radius: 12px;
+           border: 1px solid rgba(255,255,255,.62); background: rgba(255,255,255,.44); }
+.sx-node .hd { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sx-node .nm  { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11px; font-weight: 600;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-node .sub { font-family: var(--mono); font-size: 9.5px; color: var(--faint);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.sx-gauges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sx-gauge .n { margin-top: 3px; font-size: 21px; font-weight: 680; letter-spacing: -.02em;
+               line-height: 1.05; font-variant-numeric: tabular-nums; }
+.sx-gauge .n small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.sx-gauge .n.good { color: var(--allow); }
+.sx-gauge .n.warn { color: var(--report); }
+.sx-gauge .n.bad  { color: var(--deny); }
+.sx-gauge .dt { margin-top: 4px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+
+/* The sentence that belongs to the path, not to a stage — so it spans the deck. ADDED to the
+   system: portal.css has one banner tone; a consequence that can be good, bad or unknown needs
+   three, held on the same allow/report/deny ramp everything else on this console uses. */
+.sx-conseq { grid-column: 1 / -1; grid-row: 4; margin-top: 20px;
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 13px 16px; border-radius: 13px; font-size: 12px; line-height: 1.55;
+  color: var(--muted);
+  border: 1px solid rgba(91,141,239,.28); background: rgba(91,141,239,.09); }
+.sx-conseq strong { color: var(--ink); font-weight: 640; }
+.sx-conseq .bico { flex: none; font-size: 13px; line-height: 1.35; }
+.sx-conseq.bad { border-color: rgba(209,73,91,.30); background: rgba(209,73,91,.09); }
+.sx-conseq.ok  { border-color: rgba(47,158,107,.30); background: rgba(47,158,107,.09); }
+.sx-conseq.dim { border-style: dashed; border-color: rgba(106,114,135,.32);
+                 background: rgba(106,114,135,.07); }
+.sx-conseq.dim .bico { color: var(--faint); }
+
+/* Two stats that must stay side by side in a narrow lane; the shared .stats wraps them. */
+.sx-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sx-stats .k { font-size: 25px; font-weight: 680; letter-spacing: -.02em; line-height: 1.05;
+               font-variant-numeric: tabular-nums; }
+.sx-stats .k small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.sx-stats .k.good { color: var(--allow); }
+.sx-stats .k.bad  { color: var(--deny); }
+.sx-stats .l { margin-top: 3px; font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+
+/* The trend recorder: the one number that belongs to the path rather than to any stage. */
+.sx-flow { grid-column: 1 / -1; grid-row: 5; margin-top: 14px;
+           padding: 13px 16px 9px; border-radius: 16px;
+           border: 1px solid rgba(255,255,255,.62); background: rgba(255,255,255,.40); }
+.sx-flow-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.sx-flow-n { font-size: 19px; font-weight: 680; letter-spacing: -.02em;
+             font-variant-numeric: tabular-nums; }
+.sx-flow-n small { font-size: 11px; font-weight: 500; color: var(--muted); }
+.sx-flow-d { font-size: 11px; color: var(--muted); }
+
+/* --------------------------------------------------------------- narrow view */
+/* Below the schematic's minimum useful width the path stops being drawable side by side, so
+   each station drops to its own instruments and the ducts go away rather than shrink to noise. */
+@media (max-width: 1100px) {
+  .sx { display: flex; flex-direction: column; gap: 4px; }
+  .sx-cap, .sx-pipe, .sx-riser, .sx-rule { display: none; }
+  .sx-station.a-lb   { order: 1; } .sx-lane.a-lb   { order: 2; }
+  .sx-station.a-vmss { order: 3; } .sx-lane.a-vmss { order: 4; }
+  .sx-station.a-pip  { order: 5; } .sx-lane.a-pip  { order: 6; }
+  .sx-conseq { order: 7; } .sx-flow { order: 8; }
+  .sx-lane { padding-bottom: 8px; }
+  .sx-lane .freshness { margin-top: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) { .sx-duct { animation: none; } }

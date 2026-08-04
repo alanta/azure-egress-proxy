@@ -1,0 +1,60 @@
+@model Portal.Pages.RuntimeModel
+@*  The schematic: one card, one grid, four swap targets.
+
+    The process line and the instrument deck share a single grid, which is what makes the column
+    the association between a stage and its instruments — no legend, no cross-referencing, no
+    repeated headings. A dashed riser ties each lane up to the station it belongs to and that is
+    the whole navigational apparatus.
+
+    DOM order is stage-major, visual order is row-major (design.md D7). The grid puts stations in
+    row 1 and lanes in row 3, but each stage emits its station and then its own lane, so a screen
+    reader hears a stage followed immediately by its instruments — which is the order the schematic
+    is arguing for anyway. Nothing here is focusable, so the divergence costs no keyboard user a
+    sensible tab sequence; it would need revisiting if a stage ever became a link.
+
+    The caps at either end are the parent's and never swap: they are the deployment's shape, not a
+    reading. *@
+<section class="card sx-card">
+    <div class="sx-head">
+        <div>
+            <div class="eyebrow">Egress path</div>
+            <div class="sx-title">@Model.PathHeadline</div>
+        </div>
+        @* One part per source, never one age for the card: the stages are fed by different sources
+           at different ages, so a single stamp would be the wrong claim about at least one of
+           them. Each lane carries its own as well. *@
+        <partial name="_Freshness" model="Model.CardFreshness" />
+    </div>
+
+    <div class="sx">
+        @* Decoration: the rule the deck hangs from, and the risers tying each lane to its station. *@
+        <div class="sx-rule" aria-hidden="true"></div>
+        <div class="sx-riser" style="grid-column:3" aria-hidden="true"></div>
+        <div class="sx-riser" style="grid-column:5" aria-hidden="true"></div>
+        <div class="sx-riser" style="grid-column:7" aria-hidden="true"></div>
+
+        <div class="sx-cap" style="grid-column:1">
+            <img class="azicon sm" src="/img/azure/virtual-network.svg" alt="" width="21" height="21">
+            <span class="lbl">Workloads<br>spoke vnet</span>
+        </div>
+
+        <partial name="_RuntimeLoadBalancer" model="Model" />
+        <partial name="_RuntimeFleet" model="Model" />
+        <partial name="_RuntimePrefix" model="Model" />
+
+        <div class="sx-cap" style="grid-column:9">
+            @* Hand-drawn rather than an Azure icon: the far end of the path is somebody else's
+               network, which Azure's icon set has no mark for. *@
+            <span class="azicon sm" aria-hidden="true">
+                <svg viewBox="0 0 18 18" fill="none" stroke="#8b93a8" stroke-width="1.05">
+                    <circle cx="9" cy="9" r="7"></circle>
+                    <ellipse cx="9" cy="9" rx="3" ry="7"></ellipse>
+                    <path d="M2.3 6.8h13.4M2.3 11.2h13.4"></path>
+                </svg>
+            </span>
+            <span class="lbl">Partner<br>endpoints</span>
+        </div>
+
+        <partial name="_RuntimeConsequence" model="Model" />
+    </div>
+</section>

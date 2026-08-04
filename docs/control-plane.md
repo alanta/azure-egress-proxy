@@ -319,6 +319,14 @@ container, its own image, gated on `deployPortal` exactly as the API is gated on
 **Lookup**, **Platform**, and **Runtime**. Design record:
 [`openspec/changes/management-portal-console/`](../openspec/changes/management-portal-console/).
 
+**Runtime** is drawn as one schematic rather than as a grid of cards: the load balancer, the proxy
+scale set and the egress prefix as ordered stages of the route traffic takes out of the network,
+each stage's readings in a lane directly beneath it. That shape exists to make one relationship
+visible instead of inferred — the prefix is the fleet's ceiling, because a node past the last
+address egresses from somewhere no partner has allowlisted, and its traffic is refused at the
+partner's edge where this console cannot see it. A stage whose source could not be read is shown
+as *unread*: hatched, unlit, and never as a stage reporting zero.
+
 The join it exists to make is exact rather than heuristic: the audit table's `Role` column *is*
 the workload's `appid` from the validated JWT, which is precisely `subjects[].appid` here. So a
 denial resolves to the ruleset that caused it, and from there to the change that would allow it.
