@@ -1,0 +1,15 @@
+@model Portal.Pages.RuntimeChart
+@* The trend recorder along the foot of the card: the one number that belongs to the path rather
+   than to any single stage.
+
+   Measured on the scale set, labelled for the path. "Throughput leaving the prefix" is what an
+   operator wants to read; `Network Out Total` on the VMSS is what Azure measures. They are the same
+   bytes, which is why the copy stands (design.md, Open). *@
+<div class="sx-flow">
+    <div class="sx-flow-head">
+        <span class="eyebrow">Throughput leaving the prefix</span>
+        <span class="sx-flow-n @Model.ToneClass">@Model.Value<small> @Model.Suffix</small></span>
+        <span class="sx-flow-d">@Model.Detail · 1-minute samples, last hour</span>
+    </div>
+    <partial name="_RuntimeGraph" model="Model.Chart" />
+</div>

@@ -100,11 +100,18 @@ and must gain the identity.
 
 ### Design system — the shared partials
 
-The visual specification is
-[`mockups/portal.html`](../../openspec/changes/management-portal-console/mockups/portal.html) —
-**open it in a browser**. Where it and this document disagree about layout, the mockup wins. The
-stylesheet in `wwwroot/css/portal.css` is a near-verbatim port of it; its header comment records
-the three mockup-only rules that were dropped and the one addendum that was added.
+The visual specification is two mockups — **open them in a browser**. Where one of them and this
+document disagree about layout, the mockup wins.
+
+- [`portal.html`](../../openspec/changes/archive/2026-08-03-management-portal-console/mockups/portal.html)
+  — the design language and every surface's layout.
+- [`runtime.html`](../../openspec/changes/runtime-path-schematic/mockups/runtime.html) — the
+  Runtime surface as one schematic. Scroll past the first card: the two state studies below it are
+  what the implementation has to survive.
+
+The stylesheet in `wwwroot/css/portal.css` is a near-verbatim port of both; its header comment
+records the three mockup-only rules that were dropped, the one addendum that was added, and the
+single deliberate difference in the `.sx-*` block (icons served as files rather than inlined).
 
 The design language is inherited from ZEP (`~/Projects/Zure/zep`, **outside this repository**).
 The semantic `allow` / `report` / `open` ramp is the one thing added here — held separate from the
@@ -121,7 +128,8 @@ accent hue so policy state reads at a glance rather than requiring the label to 
 | Host list | `_HostList` | `HostListModel(Hosts, Added?, Removed?)` |
 | Freshness | `_Freshness` | `FreshnessModel.From(freshness)` or `From((label, freshness), …)` |
 | Sparkline | `_Sparkline` | `ChartModel` — 46px, for a card footer |
-| Metric chart | `_MetricChart` | `ChartModel` — taller, with a baseline, for Runtime |
+| Metric graph | `_RuntimeGraph` | `ChartModel` — line, fill and a baseline, at whatever `Width`/`Height` the caller sets |
+| Metric track | `_RuntimeTrack` | `ChartModel` — line only. For a series that lives at its own maximum, where a fill would read as a progress bar |
 | Unavailable | `_Unavailable` | `string?` — renders `Error` as a banner, so a panel that could not be filled never looks like a panel with nothing to report |
 
 Rules for a surface:
@@ -155,6 +163,54 @@ without a surface doing anything. Do not add per-panel spinners on top of it.
 Layout comes from `_Layout.cshtml`: sticky 62px header, the pill tab bar as **real routes** under
 `hx-boost`, and `body[data-surface]` selecting the per-surface background tint. Set it from a page
 with `ViewData["Surface"] = Surface.Traffic.Key`.
+
+### The Runtime surface — one schematic, four swap targets
+
+Runtime is the one surface that is not a grid of cards. It is a single card drawing the path
+traffic actually takes — workloads → load balancer → scale set → egress prefix → partner endpoints
+— over an instrument deck in which every reading sits in a lane directly beneath the stage it
+describes. The column *is* the association; there is no legend and no cross-referencing.
+
+It replaced five panels (fleet, egress addresses, network out, CPU, availability) that each said a
+true thing about one resource and none of which said the thing that matters most: **these are
+stages of one path, and a number in one of them constrains the others.** Every number the panels
+carried is still here.
+
+| Partial | What it is |
+|---|---|
+| `_RuntimePath` | The card, the grid, the two static caps, the rule and the risers. Owns nothing that reads |
+| `_RuntimeStation` | One station of the process line — `StageView` |
+| `_RuntimeDuct` | One duct between two stations — `DuctView` |
+| `_RuntimeLoadBalancer` | **Swap target.** Inlet duct, LB station, LB lane |
+| `_RuntimeFleet` | **Swap target.** LB→VMSS duct, VMSS station, node lane, both gauges, the trend recorder |
+| `_RuntimePrefix` | **Swap target.** VMSS→prefix duct, prefix station, prefix lane, outlet duct |
+| `_RuntimeConsequence` | **Swap target.** The consequence bar, composed across every stage |
+| `_RuntimeRecorder` | The wide throughput strip — `RuntimeChart` |
+
+Four things about it are load-bearing:
+
+- **Each swap target is a `display: contents` wrapper.** It disappears from layout while its
+  children are still placed by the schematic's grid, so one htmx target owns a station in the
+  process line *and* a lane in the deck even though the grid puts them in different rows. That is
+  what preserves the property the five separate panels had: a slow ARM read degrades its own stage
+  while the rest of the card keeps rendering.
+- **Unread is a state, not a colour choice.** `LampState.Unread` is unlit and hatched — never the
+  appearance of a healthy stage, and never reported as zero. This is `Health()`'s refusal to paint
+  a node green without a verdict, one level up. `RuntimeTests` pins it.
+- **A duct is about entering the stage to its right**, so that stage owns it. A full prefix makes
+  the duct into it *constrained*, never *stopped*: it caps growth, it does not stop today's
+  requests.
+- **The consequence bar renders on a quiet day.** A bar that disappears when nothing is wrong
+  trains an operator not to look at it — and it is the accessible carrier of the whole schematic,
+  because the ducts are CSS and invisible to assistive technology.
+
+Document order is stage-major (station, then its own lane); the grid places them row-major. Nothing
+on the surface is focusable, so the divergence costs no keyboard user a tab sequence today; it
+would need revisiting if a stage ever became a link.
+
+The four Azure icons in `wwwroot/img/azure/` are Microsoft's architecture icons, served as files
+rather than inlined because each SVG document scopes its own gradient ids — four inline copies on
+one page would collide. Provenance and the one deliberate patch are in [`NOTICE`](../../NOTICE).
 
 ### Configuration
 

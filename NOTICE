@@ -3,3 +3,22 @@ Copyright (c) 2026 Marnix van Valen
 
 The proxy in this repository embeds Smokescreen by Stripe
 (https://github.com/stripe/smokescreen), licensed under the MIT License.
+
+The management console vendors four icons from Microsoft's Azure architecture
+icon set (https://learn.microsoft.com/azure/architecture/icons/) under
+src/Portal/wwwroot/img/azure/: Load Balancer, Virtual Machine Scale Set, Public
+IP Prefix and Virtual Network. Microsoft licenses these icons for use in
+architecture diagrams and technical documentation, subject to the terms on that
+page; they are not covered by this repository's own licence and they are not
+Microsoft trademarks licensed for any other use.
+
+public-ip-prefix.svg carries one deliberate correction to Microsoft's original,
+which ships two gradients with no stops and renders two thirds invisible. The
+file documents the change in place.
+
+The console embeds the Geist and Geist Mono typefaces (Copyright (c) 2023
+Vercel, in collaboration with basement.studio) in
+src/Portal/wwwroot/css/portal.css, licensed under the SIL Open Font License 1.1.
+
+The console vendors htmx (https://htmx.org) under
+src/Portal/wwwroot/lib/htmx/, licensed under the Zero-Clause BSD licence.

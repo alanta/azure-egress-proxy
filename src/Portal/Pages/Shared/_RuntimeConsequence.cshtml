@@ -1,0 +1,25 @@
+@model Portal.Pages.RuntimeModel
+@{
+    var consequence = Model.Consequence;
+}
+@*  Swap target 4 of 4: the one sentence that belongs to the path rather than to any single stage,
+    so it spans the whole deck.
+
+    It composes across every stage and therefore re-reads all of them — each through the response
+    cache, so this costs no Azure call.
+
+    Two things about it that must survive a redesign:
+
+    - It renders on a quiet day. A bar that disappears when nothing is wrong trains an operator not
+      to look at it, and this bar is the accessible carrier of the schematic's whole thesis: the
+      ducts are CSS decoration and are invisible to assistive technology, so the relationship they
+      draw exists in the accessibility tree only as this sentence (design.md D3).
+    - When a source is unread it says so, and states neither that the fleet is constrained nor that
+      it is not. The console does not guess on Resource Manager's behalf. *@
+<div hx-get="/Runtime?handler=Consequence" hx-trigger="every 60s" hx-swap="outerHTML"
+     style="display:contents">
+    <div class="sx-conseq @consequence.Tone">
+        <span class="bico" aria-hidden="true">@consequence.Icon</span>
+        <span><strong>@consequence.Headline</strong> @consequence.Detail</span>
+    </div>
+</div>

@@ -25,7 +25,7 @@ flowchart LR
     APP -.blocked by NSG.-> NET
 ```
 
-## Load-bearing design decisions
+## Design decisions
 
 | Decision | Why |
 |---|---|
@@ -37,6 +37,33 @@ flowchart LR
 | **Allowlist = one JSON blob, ETag reload** | Atomic writes, cheap conditional GETs, versioning/soft-delete as audit trail. See [allowlist.md](allowlist.md). Written directly (GitOps) or, for per-team self-service, through a validating [control plane](control-plane.md) (Mode 2). |
 | **Single static Go binary, reload folded in** | No sidecars, no container runtime on the VM, `systemd` restart is the reload. Distroless/nonroot when containerized (local dev). |
 | **Anti-SSRF** | Smokescreen resolves the destination and blocks private/link-local ranges — the proxy cannot be used to reach internal IPs. This makes `NO_PROXY` load-bearing for the client (internal traffic must bypass the proxy). |
+
+## What it doesn't do
+
+The tunnel is end-to-end TLS between the workload and the third party. The proxy sees the
+`CONNECT` line and the bytes' volume and timing — never the plaintext. It governs **where**
+traffic goes, not **what** goes there.
+
+Concretely, out of scope: DLP, malware/AV scanning, request-path or method granularity
+(`api.example.com/v1/read` cannot be allowed while `/v1/admin` is denied), request or
+response body policy, and anything that depends on the HTTP layer inside the tunnel. The
+allowlist's unit is `host[:port]` and that is the finest grain available — see
+[allowlist.md](allowlist.md).
+
+The consequence is that **an allowed FQDN is a full-trust bidirectional
+channel.** A compromised workload with `github.com` on its list can exfiltrate through
+`github.com`, and the audit row will read as a normal allow. The audit trail narrows this but
+does not close it — `CANONICAL-PROXY-CN-CLOSE` carries `BytesIn`/`BytesOut`/`DurationMs` per
+connection, so unusual volume to an allowed host is detectable after the fact
+([observability.md](observability.md)). Policy hygiene is the real mitigation: prefer
+vendor-specific hostnames over wildcards and shared CDN domains, since a wildcard on a domain
+anyone can host under is an allowlist in name only.
+
+Full inspection requires TLS interception (MITM with a trusted CA) and it is deliberately not
+implemented here. This is a narrow focus solution aimed at gating network egress and preventing
+malicious introspection. Where content-level control is genuinely required, it belongs at the 
+application or at a dedicated CASB/DLP tier, that is a different solution that could be layered 
+on top of this proxy.
 
 ## Traffic classes
 

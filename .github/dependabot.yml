@@ -18,6 +18,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Keep OpenAPI stack on 2.x for now; 3.x requires explicit migration work.
+      - dependency-name: Microsoft.OpenApi
+        versions:
+          - 3.*
     groups:
       # The Aspire/Extensions packages version in lockstep; one PR per bump is noise.
       microsoft:

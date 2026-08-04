@@ -1,0 +1,33 @@
+@model Portal.Pages.StageView
+@* One station of the process line.
+
+   "Cannot see" is a third state and never a healthy one (design.md D4): an unread stage is drawn
+   with a dashed border over a hatch, its Azure icon desaturated, its lamp unlit — and it reports
+   that it is not readable rather than reporting zero. The `blind` class carries all of that. *@
+<div class="sx-station a-@Model.Anchor@(Model.Unread ? " blind" : "")">
+    <span class="sx-lamp @Model.LampClass"></span>
+    <div class="sx-top">
+        @* Decorative: the tag and the resource name carry the meaning, and served as its own
+           document so four icons on one page cannot collide on gradient ids (design.md D6). *@
+        <img class="azicon" src="@Model.Icon" alt="" width="26" height="26">
+        <span class="sx-id">
+            <span class="sx-tag">@Model.Tag</span>
+            <span class="sx-name" title="@Model.Name">@Model.Name</span>
+        </span>
+    </div>
+    @if (Model.Unread)
+    {
+        <div class="sx-blindnote">@(Model.Sub ?? "Not readable")</div>
+    }
+    else
+    {
+        <div class="sx-read">
+            <span class="n">@Model.Value</span>
+            <span class="u">@Model.Unit</span>
+        </div>
+        @if (Model.Sub is { Length: > 0 } sub)
+        {
+            <div class="sx-sub">@sub</div>
+        }
+    }
+</div>

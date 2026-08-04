@@ -1,0 +1,12 @@
+@model Portal.Pages.DuctView
+@* A duct between two stations, owned by the stage on its right — a duct is about entering the
+   stage it points at (design.md D2).
+
+   Motion is a reading, not decoration: only a duct carrying traffic moves, and the constrained
+   tone exists precisely so a full prefix is not drawn as stopped traffic (design.md D5). The whole
+   element is decoration to assistive technology — the relationship it draws is carried in the
+   accessible tree by the consequence bar instead. *@
+<div class="sx-pipe @Model.ToneClass" style="grid-column:@Model.Column" aria-hidden="true">
+    <span class="sx-duct"></span>
+    <span class="sx-chip">@Model.Chip</span>
+</div>
