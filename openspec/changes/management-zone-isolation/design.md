@@ -238,29 +238,35 @@ Two families here are not:
 | `AcrPull` ×2 on the registry | the registry is created in phase 1, the pull identities in phase 2 |
 | `Reader`, `Monitoring Reader` for the console | resource-group scope; there is no resource to pass them to |
 
-Both are written today as hand-rolled `Microsoft.Authorization/roleAssignments` resources, and
-the change would add two more of the same. Small shared modules instead:
+Both are written today as hand-rolled `Microsoft.Authorization/roleAssignments` resources, and the
+change would have added two more of the same. The AVM index was checked first, per the repo's
+convention, and **it covers the harder of the two families**:
 
 ```
-  infra/modules/shared/acr-role-assignment.bicep    registryName, principalId, roleDefinitionId
-  infra/modules/shared/rg-role-assignment.bicep     principalId, roleDefinitionId
+  br/public:avm/ptn/authorization/resource-role-assignment:0.1.2
+      resourceId, principalId, roleDefinitionId, principalType
 ```
 
-**One generic module is not possible.** A role assignment's `scope` must be a typed `existing`
-resource declared in the same file, so the target's resource type is baked in. One module per
-target type is the floor, not a design choice — worth a comment so the next person does not try
-to collapse them.
+**"One generic module is impossible" turns out to be false, but only for AVM.** In Bicep a role
+assignment's `scope` must be a typed `existing` resource declared in the same file, which is what
+would have forced one local module per target type. The AVM module escapes that by dropping to raw
+ARM: it emits a nested deployment whose inner template sets `scope` to the resource-id *string*,
+which the Bicep language cannot express. So a single module does work for any resource type — and
+the reason it works is worth knowing before anyone tries to write the local equivalent.
 
-**Check AVM first.** The registry may be reachable through an Azure Verified Module for
-resource-scoped role assignments; the repo's convention is AVM where one exists. Write the local
-module only if it does not.
+Its default assignment name is `guid(resourceId, principalId, roleDefinitionId)`, which is exactly
+the convention this change wanted, so it arrives for free.
 
-**The naming convention improves on the way in.** The existing assignments are named
-`guid(resourceGroup().id, 'portal', 'Reader')` — string literals standing in for the principal
-and the role. That means changing the principal leaves the assignment name unchanged, so ARM
-updates in place rather than replacing, and two grants that happen to pick the same literal
-collide. A shared module standardises on `guid(<scope>.id, principalId, roleDefinitionId)`,
-which is deterministic on the things that actually identify the grant.
+**The resource-group family needs no module at all.** `hub.bicep` is already resource-group scoped,
+so a resource-group-scoped assignment declared inline in it needs no scope indirection — the case
+for a module there was never the scope, only the naming, and the names are simply corrected in
+place. The console's `Reader` and `Monitoring Reader` therefore stay as inline resources, renamed
+from `guid(resourceGroup().id, 'portal', 'Reader')` — string literals standing in for the principal
+and the role, so that changing the principal left the name unchanged and ARM updated in place
+rather than replacing — to `guid(resourceGroup().id, principalId, roleDefinitionId)`.
+
+Net: no files under `infra/modules/shared/`, one AVM reference for the two `AcrPull` grants, and
+two renamed inline resources for the console's.
 
 ## Why the registry belongs in the hub
 
@@ -303,6 +309,77 @@ because merging is work with no benefit today.
 | `allow-proxy-egress` | kept | **not added** | the management zone has no proxy route by design |
 | `deny-internet` floor | kept | added | |
 | `allow-afd-backend-443/31443` | kept | added | ACA platform dependency for external ingress |
+| `allow-mcr` | kept | added | ACA platform dependency; the table originally omitted it |
+| `allow-afd-firstparty` | kept | added | ACA platform dependency; the table originally omitted it |
+| `allow-azure-load-balancer-inbound` | kept | added | ACA platform health flows |
+
+The last three were missing from the first draft of this table. They are not optional: the
+management zone hosts a Container Apps environment exactly as the spoke does, and an environment
+whose subnet cannot reach `MicrosoftContainerRegistry` does not come up at all. `allow-acr-storage`
+is also **unconditional** here where the spoke guards it on there being a registry — the tag covers
+the control plane's blob writes as well as ACR layer data, so the control plane needs it even with
+every image pulled from a public reference.
+
+## The inbound rules — tested, inert, and kept anyway
+
+The documentation could not settle whether the three inbound rules on these subnets are consulted.
+[Microsoft's NSG reference](https://learn.microsoft.com/en-us/azure/container-apps/firewall-integration)
+says inbound NSG rules do not apply to an **external workload-profile** environment (which both of
+these are), and on the same page lists an inbound `443, 31443` rule for workload profiles. So it
+was tested instead.
+
+**Method.** Against the sample app — chosen because it has no authentication in front of it, so a
+`200` can only have been produced by the application process itself, inside the delegated subnet.
+One replica confirmed running first, since a cold start would have muddied the result.
+
+| | `allow-afd-backend-443` / `-31443` / `allow-azure-load-balancer-inbound` | `GET /healthz` |
+|---|---|---|
+| baseline | present | `200`, `200`, `200` |
+| after deletion (+60s) | **all three removed** | `200`, `200`, `200` |
+| restored | present | — |
+
+**Result: the rules are not consulted.** Ingress reached the container with all three absent. The
+external-environment carve-out is the operative statement; the inbound table describes *internal*
+workload-profile environments.
+
+**They are kept regardless, and this is the reasoning rather than inertia.** Three arguments, and
+the third is decisive:
+
+1. Removing them changes nothing today — they permit traffic that never arrives.
+2. They are the documented rule set for an **internal** environment. Flipping `internal: true` on
+   either environment — the production posture for the console, recorded in
+   `docs/production-hardening.md` — makes inbound traverse the subnet, at which point their absence
+   breaks ingress. Deleting them would plant a failure for whoever takes that step.
+3. One experiment, on one platform, on one day. The result is clear but it is a statement about
+   current Container Apps behaviour, not a guarantee. Removing a rule set on that basis buys
+   tidiness and risks an outage; keeping it costs nothing.
+
+What was wrong was never the rules — it was the **comment** asserting a mechanism nobody had
+tested. That is corrected in both modules: they now say the rules are inert on an external
+environment, why they are retained, and that the 31443 edge-proxy port is real but the
+`AzureFrontDoor.Backend` source is this repo's inference rather than the reference's wording.
+
+`allow-azure-load-balancer-inbound` additionally duplicates Azure's default
+`AllowAzureLoadBalancerInBound` (priority 65001), since neither NSG carries an inbound deny. Also
+kept, and for the same reason: being explicit in a security control is worth more than one saved
+line, and it is the documented rule for the internal case.
+
+## The registry is not VNet-integrated, and that is why the rules exist
+
+Worth stating because it reads backwards. `AzureContainerRegistry` and `Storage.<region>` are
+required on all three subnets **because** the registry is Basic with a public endpoint and no
+private endpoint — confirmed live: `publicNetworkAccess: Enabled`, `privateEndpointConnections:
+[]`, `networkRuleSet: null`. An image pull is therefore ordinary public-bound egress leaving the
+subnet, which `deny-internet` would refuse; the service tags are sets of those services' *public*
+prefixes, sitting above the floor.
+
+The reference is explicit about the inverse, which is the production posture:
+
+> You don't need to add an NSG rule for Container Registry when it's configured with private
+> endpoints.
+
+So the rules disappear under ACR Premium + private endpoint — at which point the traffic really
+does stay on the VNet. Today it does not.
 
 ## What verification is available
 

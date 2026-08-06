@@ -23,18 +23,23 @@ credential that works from anywhere on the internet, and the blob it opens is th
 runs as the security control. The allowlist account next to it already has
 `allowSharedKeyAccess: false`.
 
-Checked against the running deployment, it is worse than that. Because the account is created by
-`az storage account create` with no hardening flags, it has taken the CLI defaults on both
-settings the declared account sets explicitly:
+Checked against the running deployment (`egressbin54c45055`, created 2026-07-05):
 
 | | config account (Bicep) | bootstrap account (CLI) |
 |---|---|---|
-| `allowSharedKeyAccess` | `false` | *unset* — shared keys work |
-| `minimumTlsVersion` | `TLS1_2` | **`TLS1_0`** |
+| `allowSharedKeyAccess` | `false` | **`null`** — unset, so shared keys work |
+| `minimumTlsVersion` | `TLS1_2` | `TLS1_2` — the CLI default, same as the declared account |
 
-A storage account serving the proxy binary over TLS 1.0, reachable with a bearer key from
-anywhere, is the weakest thing in the deployment. Declaring it in Bicep is what fixes both, and
-it is the reason this is worth doing in the same change rather than later.
+An earlier draft of this proposal claimed the bootstrap account was also on **TLS 1.0**. That is
+wrong: `az storage account show` reports `TLS1_2`, because the CLI's default for new accounts is
+TLS 1.2. Corrected here rather than left standing — the account is not as bad as first written, and
+a proposal that overstates its own finding is worse than one that understates it.
+
+What remains is the real finding, and it is enough on its own: **a storage account whose blob is
+the binary that runs as the security control accepts a bearer key that works from anywhere on the
+internet.** The account next to it disabled that explicitly; this one never did, because nothing
+declared it. Declaring it in Bicep is what fixes it, and it is why this belongs in the same change
+rather than later.
 
 ## What Changes
 
@@ -67,6 +72,21 @@ it is the reason this is worth doing in the same change rather than later.
   that `main.bicep` could order. A subscription-scoped `bootstrap.bicep` creates the hub resource
   group, the bootstrap account and the registry; `deploy.sh` then fills both; `main.bicep`
   consumes them.
+
+- **Close the audit trail's write path, and give the zones somewhere to log.** Three findings that
+  surfaced while verifying the zone, all in its remit:
+  - The console held **`Monitoring Reader`**, whose bare `*/read` matches
+    `Microsoft.OperationalInsights/workspaces/sharedKeys/read`. That key authenticates the legacy
+    Data Collector API, which *appends rows to custom tables* — so a "read-only" console could forge
+    entries into `EgressProxy_CL`. Swapped for **`Log Analytics Reader`**, which excludes exactly
+    that operation in its `notActions` and is otherwise a superset. Paired with
+    **`disableLocalAuth: true`** on the workspace, so the key cannot ingest even if read.
+  - Neither Container Apps environment had **`appLogsConfiguration`** at all, so console and
+    platform logs were never persisted and the Logs blade had nothing to query. Both now use
+    `destination: 'azure-monitor'` plus a diagnostic setting — *not* `'log-analytics'`, which
+    authenticates with the very shared key just disabled.
+  - The two management services logged the Azure SDK at `Information`, where `Azure.Identity` and
+    `Azure.Core` between them dominated the stream. Set to `Warning`, which keeps failures.
 
 ## What This Deliberately Does Not Change
 

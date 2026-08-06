@@ -7,11 +7,52 @@ param namePrefix string
 @description('Principal object ID that should have write access to allowlist blobs. In the GitOps topology this is the CI identity that publishes allowlist.json; with the control plane deployed it is the PLATFORM team identity that seeds the state blob and edits its grants section — team pipelines never get a blob role in either case.')
 param deployerPrincipalId string
 
-@description('Deploy the control plane (Mode 2). When true, a user-assigned identity is created and becomes the only other writer of the allowlist blobs; the proxy stays read-only.')
+@description('Deploy the control plane (Mode 2). Its identity is created in the management resource group and becomes the only other writer of the allowlist blobs; the proxy stays read-only.')
 param deployControlPlane bool = false
 
-@description('Deploy the read-only management console (Mode 3). When true, a user-assigned identity is created with Reader + Monitoring Reader on this resource group and NO write role anywhere — in particular no role on the allowlist storage.')
+@description('Deploy the read-only management console (Mode 3). Its identity is created in the management resource group and granted Reader + Log Analytics Reader on THIS resource group and NO write role anywhere — in particular no role on the allowlist storage, and no path to the workspace shared key.')
 param deployPortal bool = false
+
+// ── Principals granted on the resources this module owns ───────────────────────────────────────
+// Every identity is created in the resource group of its own compute, by the *-identity.bicep
+// modules that run before this one; every role assignment lives in the module that owns the
+// resource it grants on. The hub owns the config storage account, the registry and the platform
+// the console reads, so nearly every grant in the deployment collects here — which is the intent:
+// one place to read to learn who can touch the shared resources. See design.md § Dependency
+// ordering.
+
+@description('Principal id of the proxy identity (hub-identity.bicep). Granted Storage Blob Data Reader on the config account.')
+param proxyIdentityPrincipalId string
+
+@description('Client id of the proxy identity, baked into cloud-init so the proxy selects the right user-assigned identity.')
+param proxyIdentityClientId string
+
+@description('Resource id of the proxy identity, attached to the scale set.')
+param proxyIdentityResourceId string
+
+@description('Principal id of the control-plane identity (mgmt-identity.bicep). Granted Storage Blob Data Contributor on the config account. Empty when the control plane is not deployed.')
+param controlPlaneIdentityPrincipalId string = ''
+
+@description('Principal id of the console identity (mgmt-identity.bicep). Granted Reader + Log Analytics Reader on this resource group. Empty when the console is not deployed.')
+param portalIdentityPrincipalId string = ''
+
+@description('Principal id of the workload environment\'s image-pull identity (spoke-identity.bicep). Granted AcrPull on the registry.')
+param spokeAcrPullPrincipalId string = ''
+
+@description('Principal id of the management environment\'s image-pull identity (mgmt-identity.bicep). Granted AcrPull on the registry. Empty when the management zone is not deployed.')
+param mgmtAcrPullPrincipalId string = ''
+
+@description('Name of the container registry created by bootstrap.bicep in this resource group. Empty when every image is given as an already-pullable reference, in which case there is no registry and nothing to grant on.')
+param containerRegistryName string = ''
+
+@description('Name of the bootstrap storage account created by bootstrap.bicep in this resource group, holding the proxy binary.')
+param bootstrapStorageAccountName string
+
+@description('Container in the bootstrap account holding the proxy binary.')
+param bootstrapContainerName string = 'proxy-bin'
+
+@description('Blob name of the proxy binary in the bootstrap container.')
+param bootstrapBlobName string = 'egress-proxy_linux_arm64'
 
 @description('JWKS URL used for proxy identity validation.')
 param jwksUrl string
@@ -22,8 +63,8 @@ param expectIss string
 @description('Expected token audience used by the proxy.')
 param expectAud string
 
-@description('Public release URL for the linux-arm64 egress-proxy binary.')
-param proxyBinaryUrl string
+@description('Override for the URL cloud-init fetches the linux-arm64 egress-proxy binary from. Empty (the default) composes it from the bootstrap account below, which is where deploy.sh seeds it. Set it only to point at a binary you host yourself; it must be an http(s) URL reachable from the proxy subnet, because the VM fetches it with an unauthenticated curl before it holds any token.')
+param proxyBinaryUrl string = ''
 
 @description('SHA256 hash for the proxy binary.')
 @secure()
@@ -65,7 +106,30 @@ var allowlistBlobName = 'allowlist.json'
 var rulesetsBlobName = 'rulesets.json'
 var proxyPort = 4750
 
+// Empty on purpose, and it is the one exemption in the deployment. The proxy is the component
+// whose whole job is to reach arbitrary allowed destinations on the Internet, so its policy is the
+// allowlist it enforces rather than a network rule — putting the workload egress floor here would
+// mean an NSG deciding what the allowlist is for. Every other subnet carries the floor; this
+// subnet runs on Azure defaults. An empty list reads as unfinished, so: it is not.
 var proxyNsgRules = []
+
+// The registry is created by bootstrap.bicep (phase 1) in this resource group, because the images
+// must be imported into it before any application references them. Referenced as existing so the
+// AcrPull assignments below can be scoped to it.
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (containerRegistryName != '') {
+  name: containerRegistryName
+}
+
+// Likewise the bootstrap storage account, so the binary URL is composed from the account rather
+// than string-built by the caller — which also keeps it correct in sovereign clouds, where the
+// blob suffix is not blob.core.windows.net.
+resource bootstrapStorage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: bootstrapStorageAccountName
+}
+
+var resolvedProxyBinaryUrl = proxyBinaryUrl != ''
+  ? proxyBinaryUrl
+  : '${bootstrapStorage.properties.primaryEndpoints.blob}${bootstrapContainerName}/${bootstrapBlobName}'
 
 var cloudInitTemplate = loadTextContent('../assets/cloud-init.yaml')
 var cloudInit = replace(
@@ -78,7 +142,7 @@ var cloudInit = replace(
               replace(
                 cloudInitTemplate,
                 '__PROXY_BINARY_URL__',
-                proxyBinaryUrl
+                resolvedProxyBinaryUrl
               ),
               '__PROXY_BINARY_SHA256__',
               proxyBinarySha256
@@ -93,7 +157,7 @@ var cloudInit = replace(
         expectAud
       ),
       '__AZURE_CLIENT_ID__',
-      proxyIdentity.outputs.clientId
+      proxyIdentityClientId
     ),
     '__ALLOWLIST_BLOB_URL__',
     'https://${allowlistStorage.outputs.name}.blob.${environment().suffixes.storage}/${allowlistContainerName}/${allowlistBlobName}'
@@ -129,66 +193,116 @@ module hubVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
   }
 }
 
-module proxyIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
-  name: 'proxy-uami'
-  params: {
-    name: '${namePrefix}-proxy-uami'
-    location: location
-  }
-}
-
-// Lives in the hub, next to the storage it owns: the control plane is platform infrastructure,
-// not a spoke workload, even though its container runs in the spoke's managed environment.
-module controlPlaneIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = if (deployControlPlane) {
-  name: 'control-plane-uami'
-  params: {
-    name: '${namePrefix}-control-plane-uami'
-    location: location
-  }
-}
-
-// The console's identity. It lives in the hub because everything it reads is here: the proxy
-// scale set, the egress prefix, the load balancer, and the Log Analytics workspace.
+// ============================================================================================
+// Grants on the shared platform resources
 //
-// It is the single most informative component in the deployment to compromise — policy, traffic
-// and infrastructure through one principal — so what it does NOT hold is as much of the design as
-// what it does. There is deliberately no assignment for it on the allowlist storage account (see
-// the roleAssignments on allowlistStorage below): the portal reaches policy through the
-// control-plane API's read endpoints and cannot touch the blobs at all.
-module portalIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = if (deployPortal) {
-  name: 'portal-uami'
-  params: {
-    name: '${namePrefix}-portal-uami'
-    location: location
-  }
-}
+// The console's identity is created in the management resource group, with its compute. Its roles
+// are scoped HERE, because this is where everything it reads lives: the proxy scale set, the
+// egress prefix, the load balancer and the Log Analytics workspace. It holds nothing on its own
+// resource group, which is deliberate — the console must not be able to read the deployment of the
+// thing that authenticates it — and nothing on the configuration storage account either (see the
+// roleAssignments on allowlistStorage below): it reaches policy through the control-plane API's
+// read endpoints and cannot touch the blobs at all.
+//
+// Both are declared inline rather than through a module: this template is already resource-group
+// scoped, so a resource-group-scoped assignment needs no scope indirection at all. The two
+// AcrPull grants further down do need one, and use the AVM module for it.
+//
+// The names are guid(scope, principal, role) — deterministic on the three things that actually
+// identify a grant. They used to be guid(resourceGroup().id, 'portal', 'Reader') with string
+// literals standing in for the principal and the role, which meant changing the principal left the
+// assignment name unchanged and ARM updated it in place instead of replacing it.
+// ============================================================================================
+
+var readerRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader
+)
+// Log Analytics Reader, NOT Monitoring Reader — and the difference is the whole point.
+//
+// Both are "read-only" roles built on `*/read`. But `*/read` matches
+// `Microsoft.OperationalInsights/workspaces/sharedKeys/read`, and the workspace shared key is a
+// WRITE credential: it authenticates the legacy Data Collector API, which appends rows to custom
+// tables. A principal that can read the key can forge rows into EgressProxy_CL — the audit trail
+// this whole deployment exists to produce.
+//
+// Monitoring Reader has no `notActions`, so it grants that key read. Log Analytics Reader excludes
+// it explicitly, which is the tell that the operation exists and that `*/read` would otherwise
+// cover it. Its action set is otherwise a superset of Monitoring Reader's (it adds
+// `workspaces/analytics/query/action`), so the console loses nothing it uses: metrics, scale-set
+// state and the KQL over EgressProxy_CL all still work.
+//
+// Paired with `disableLocalAuth: true` on the workspace (observability.bicep), which stops the key
+// working at all. Two independent controls, because "the console writes nothing" is an invariant
+// and one mechanism is not a guarantee.
+var monitoringReaderRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '73c42c96-874c-492b-b04d-ab87d138a893' // Log Analytics Reader
+)
+var acrPullRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '7f951dda-4ed3-4680-a7ca-43fe172d538d' // AcrPull
+)
 
 // Reader: the ARM configuration the runtime surface renders — scale-set capacity and instance
 // view, public-IP-prefix consumption, load-balancer shape. Scoped to this resource group and no
 // wider, so the console can see the egress platform and nothing else in the subscription.
 resource portalReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployPortal) {
-  name: guid(resourceGroup().id, 'portal', 'Reader')
+  name: guid(resourceGroup().id, portalIdentityPrincipalId, readerRoleDefinitionId)
   properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'acdd72a7-3385-48ef-bd42-f606fba81ae7'
-    )
-    principalId: deployPortal ? portalIdentity!.outputs.principalId : ''
+    roleDefinitionId: readerRoleDefinitionId
+    principalId: portalIdentityPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
 
-// Monitoring Reader: the metric series and the KQL over EgressProxy_CL. Reader alone does not
-// grant workspace data access, which is why this is a second assignment rather than an oversight.
+// The workspace data access: the metric series and the KQL over EgressProxy_CL. `Reader` alone
+// does not grant it, which is why this is a second assignment rather than an oversight. See the
+// note on monitoringReaderRoleDefinitionId above for why it is Log Analytics Reader specifically.
 resource portalMonitoringReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployPortal) {
-  name: guid(resourceGroup().id, 'portal', 'Monitoring Reader')
+  name: guid(resourceGroup().id, portalIdentityPrincipalId, monitoringReaderRoleDefinitionId)
   properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
-    )
-    principalId: deployPortal ? portalIdentity!.outputs.principalId : ''
+    roleDefinitionId: monitoringReaderRoleDefinitionId
+    principalId: portalIdentityPrincipalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// AcrPull, once per Container Apps environment. The grantee is each environment's dedicated pull
+// identity, not the applications: image pull is a property of the hosting environment, and the
+// sample app's identity in particular is the one the proxy authenticates — the `appid` claim the
+// allowlist keys on IS that principal, so it must not also mean "may read the registry".
+//
+// Both assignments live here rather than beside the applications because the registry lives here,
+// and every grant belongs in the module that owns the resource being granted on. Both are
+// conditional on there being a registry at all: with every image given as an already-pullable
+// reference, bootstrap.bicep deploys none and there is nothing to grant.
+//
+// The AVM pattern module is what makes a resource-scoped assignment expressible without declaring
+// the registry's type in a wrapper of our own — it does the scoping through a nested ARM
+// deployment, which plain Bicep cannot express. Its default assignment name is exactly
+// guid(resourceId, principalId, roleDefinitionId).
+module spokeAcrPull 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = if (containerRegistryName != '') {
+  name: 'spoke-acr-pull'
+  params: {
+    resourceId: containerRegistry.id
+    principalId: spokeAcrPullPrincipalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
+    roleName: 'AcrPull'
+    description: 'Image pull for the workload Container Apps environment.'
+  }
+}
+
+module mgmtAcrPull 'br/public:avm/ptn/authorization/resource-role-assignment:0.1.2' = if (containerRegistryName != '' && deployControlPlane) {
+  name: 'mgmt-acr-pull'
+  params: {
+    resourceId: containerRegistry.id
+    principalId: mgmtAcrPullPrincipalId
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalType: 'ServicePrincipal'
+    roleName: 'AcrPull'
+    description: 'Image pull for the management Container Apps environment.'
   }
 }
 
@@ -311,7 +425,7 @@ module allowlistStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
     roleAssignments: concat(
       [
         {
-          principalId: proxyIdentity.outputs.principalId
+          principalId: proxyIdentityPrincipalId
           roleDefinitionIdOrName: 'Storage Blob Data Reader'
           principalType: 'ServicePrincipal'
         }
@@ -325,7 +439,7 @@ module allowlistStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
       deployControlPlane
         ? [
             {
-              principalId: controlPlaneIdentity!.outputs.principalId
+              principalId: controlPlaneIdentityPrincipalId
               roleDefinitionIdOrName: 'Storage Blob Data Contributor'
               principalType: 'ServicePrincipal'
             }
@@ -433,7 +547,7 @@ module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.0' = 
     managedIdentities: {
       systemAssigned: false
       userAssignedResourceIds: [
-        proxyIdentity.outputs.resourceId
+        proxyIdentityResourceId
       ]
     }
     extensionHealthConfig: {
@@ -452,14 +566,13 @@ module observability 'observability.bicep' = {
     location: location
     namePrefix: namePrefix
     vmssName: proxyVmss.outputs.name
-    proxyIdentityResourceId: proxyIdentity.outputs.resourceId
+    proxyIdentityResourceId: proxyIdentityResourceId
   }
 }
 
 output hubVnetName string = hubVnet.outputs.name
 output hubVnetResourceId string = hubVnet.outputs.resourceId
 output proxyLoadBalancerPrivateIp string = proxyLoadBalancerPrivateIp
-output proxyUamiClientId string = proxyIdentity.outputs.clientId
 output proxyVmssName string = proxyVmss.outputs.name
 output allowlistStorageAccountName string = allowlistStorage.outputs.name
 output allowlistContainerName string = allowlistContainerName
@@ -467,17 +580,17 @@ output allowlistBlobName string = allowlistBlobName
 output allowlistBlobUrl string = 'https://${allowlistStorage.outputs.name}.blob.${environment().suffixes.storage}/${allowlistContainerName}/${allowlistBlobName}'
 output rulesetsBlobName string = rulesetsBlobName
 output storageServiceUrl string = 'https://${allowlistStorage.outputs.name}.blob.${environment().suffixes.storage}'
-output controlPlaneIdentityResourceId string = deployControlPlane ? controlPlaneIdentity!.outputs.resourceId : ''
-output controlPlaneIdentityClientId string = deployControlPlane ? controlPlaneIdentity!.outputs.clientId : ''
-output controlPlaneIdentityPrincipalId string = deployControlPlane ? controlPlaneIdentity!.outputs.principalId : ''
 output workspaceResourceId string = observability.outputs.workspaceResourceId
 
-// The console's identity, and the names of the four hub resources it reads. Passed through by
-// name rather than resource id because the portal's ARM client composes ids from its own
-// subscription/resource-group configuration.
-output portalIdentityResourceId string = deployPortal ? portalIdentity!.outputs.resourceId : ''
-output portalIdentityClientId string = deployPortal ? portalIdentity!.outputs.clientId : ''
-output portalIdentityPrincipalId string = deployPortal ? portalIdentity!.outputs.principalId : ''
+// The URL cloud-init actually fetched the binary from, so deploy.sh's --refresh-binary hot-swap
+// targets the same bytes the scale set booted on.
+output proxyBinaryUrl string = resolvedProxyBinaryUrl
+
+// The names of the four hub resources the console reads. Passed through by name rather than
+// resource id because the portal's ARM client composes ids from its own subscription and
+// resource-group configuration. The identity itself is no longer here: it is created in the
+// management resource group, with the compute it belongs to, and only its GRANTS are in this
+// module (see portalReader / portalMonitoringReader above).
 output proxyPublicIpPrefixName string = proxyPublicIpPrefix.outputs.name
 output proxyLoadBalancerName string = loadBalancerName
 

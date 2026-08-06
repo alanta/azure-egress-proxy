@@ -23,6 +23,10 @@ location="${LOCATION:-swedencentral}"
 name_prefix="${NAME_PREFIX:-egress}"
 hub_rg="${HUB_RESOURCE_GROUP:-rg-egress-hub}"
 spoke_rg="${SPOKE_RESOURCE_GROUP:-rg-egress-spoke}"
+# The management zone: control plane + console, in their own network and their own Container Apps
+# environment, peered with nothing. Created only when the control plane is deployed — Mode 1 is the
+# default and pays for none of it.
+mgmt_rg="${MGMT_RESOURCE_GROUP:-rg-egress-mgmt}"
 identity_file="${IDENTITY_FILE:-$repo_root/infra/identity.generated.json}"
 allowlist_file="${ALLOWLIST_FILE:-$repo_root/allowlist/allowlist.json}"
 deployment_name="${DEPLOYMENT_NAME:-egress-proxy-demo}"
@@ -52,6 +56,8 @@ portal_image_source="${PORTAL_IMAGE_SOURCE:-ghcr.io/alanta/azure-egress-proxy/po
 portal_allowed_source_ips="${PORTAL_ALLOWED_SOURCE_IPS:-}"
 # The console signs operators in through an Entra app registration, which is not an ARM resource
 # and so cannot be created by the template. Left unset, deploy.sh creates one (see below).
+# The registry serves all three zones, so it is platform infrastructure and lives in the HUB
+# resource group. Only the name derivation is unchanged; bootstrap.bicep creates it.
 acr_name="${ACR_NAME:-${name_prefix}acr$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
 # BUILD_IMAGES_LOCALLY=true builds the three platform images from this working tree and pushes
 # them to the demo ACR, instead of importing the published ones from GHCR. That is what you want
@@ -69,6 +75,10 @@ container_cli="${CONTAINER_CLI:-}"
 # uploaded (no latest-tag TOCTOU). Set PROXY_BINARY_URL only to point at a URL you host
 # yourself (e.g. a public GitHub release once the repo is public).
 proxy_binary_url="${PROXY_BINARY_URL:-}"
+# Kept separate from proxy_binary_url, which resolve_proxy_binary fills in either way. Only an
+# explicit override is passed to main.bicep: left empty, hub.bicep composes the URL from the
+# bootstrap account it references as existing, which also keeps it right in sovereign clouds.
+proxy_binary_url_override="${PROXY_BINARY_URL:-}"
 proxy_binary_sha256="${PROXY_BINARY_SHA256:-}"
 # Source deploy.sh pulls the binary FROM when seeding to storage: a local file if set,
 # otherwise downloaded from this URL (the canonical release asset).
@@ -93,33 +103,80 @@ resource_group_tags="${RESOURCE_GROUP_TAGS:-}"
 deployer_principal_id="${DEPLOYER_PRINCIPAL_ID:-$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)}"
 vm_admin_public_key="${VM_ADMIN_PUBLIC_KEY:-${SSH_PUBLIC_KEY:-$(cat "${HOME}/.ssh/id_rsa.pub" 2>/dev/null || true)}}"
 
-# Ensure a throwaway storage account + public-read container exists to host the binary.
-# It uses shared-key auth (kept enabled here) so it works without waiting on data-plane
-# RBAC propagation — this account holds only the non-secret proxy binary.
-ensure_bootstrap_storage() {
-  info "Ensuring bootstrap storage '$bootstrap_storage_account' in '$spoke_rg'"
-  az group create --name "$spoke_rg" --location "$location" --only-show-errors >/dev/null
-  if ! az storage account show --name "$bootstrap_storage_account" --resource-group "$spoke_rg" --only-show-errors >/dev/null 2>&1; then
-    az storage account create \
-      --name "$bootstrap_storage_account" \
-      --resource-group "$spoke_rg" \
-      --location "$location" \
-      --sku Standard_LRS \
-      --kind StorageV2 \
-      --allow-blob-public-access true \
-      --only-show-errors >/dev/null
-  fi
-  az storage container create \
-    --name "$bootstrap_container" \
-    --account-name "$bootstrap_storage_account" \
-    --public-access blob \
-    --auth-mode key \
+# ── Phase 1: the artifact phase ────────────────────────────────────────────────────────────────
+# Compute cannot boot until the artifacts it fetches at start-up exist, and neither a blob upload
+# nor an image push is an ARM resource main.bicep could sequence. So bootstrap.bicep creates the
+# hub resource group, the bootstrap storage account and (optionally) the registry; this script
+# fills both; main.bicep consumes them.
+#
+# It replaces the old ensure_bootstrap_storage / ensure_demo_acr pair. Those created the accounts
+# imperatively, which is how the bootstrap account ended up with the CLI's defaults on two settings
+# the declared config account has always set: shared-key access left enabled, and TLS 1.0.
+# ensure_demo_acr also created the SPOKE resource group as a side effect; main.bicep still creates
+# it, and nothing between the two phases needs it earlier than that.
+deploy_bootstrap() {
+  [[ -n "$bootstrap_done" ]] && return 0
+
+  local acr_param="false"
+  [[ "$needs_registry" == "true" ]] && acr_param="true"
+
+  step "Deploying the artifact phase (az deployment sub create: ${deployment_name}-bootstrap)"
+  info "Hub resource group '$hub_rg', bootstrap storage '$bootstrap_storage_account', registry: $acr_param"
+  az deployment sub create \
+    --name "${deployment_name}-bootstrap" \
+    --location "$location" \
+    --template-file "$repo_root/infra/bootstrap.bicep" \
+    --parameters \
+      location="$location" \
+      hubResourceGroupName="$hub_rg" \
+      resourceGroupTags="$rg_tags_json" \
+      deployerPrincipalId="$deployer_principal_id" \
+      bootstrapStorageAccountName="$bootstrap_storage_account" \
+      bootstrapContainerName="$bootstrap_container" \
+      deployContainerRegistry="$acr_param" \
+      containerRegistryName="$acr_name" \
     --only-show-errors >/dev/null
+
+  bootstrap_done=1
 }
 
-# Resolve the delivery URL + checksum the VM will use. Either honour an explicitly
-# provided (http(s)) PROXY_BINARY_URL, or seed the binary into bootstrap storage and
-# point at that blob. Sets proxy_binary_url and proxy_binary_sha256.
+# Upload the proxy binary with --auth-mode login. Shared keys are disabled on the account, so the
+# Storage Blob Data Contributor assignment bootstrap.bicep just made is the only way in — and Entra
+# role propagation is not instant. main.bicep does the same thing on the config account, but there
+# minutes of deployment sit between the assignment and the upload; here the upload follows
+# immediately, so the retry is part of the design rather than defensive padding.
+upload_with_retry() {
+  local account="$1" container="$2" blob="$3" file="$4"
+  local attempt=1 max=10 delay=15
+
+  while true; do
+    if az storage blob upload \
+      --account-name "$account" \
+      --container-name "$container" \
+      --name "$blob" \
+      --file "$file" \
+      --auth-mode login \
+      --overwrite \
+      --only-show-errors >/dev/null 2>"$patch_dir/upload.err"; then
+      return 0
+    fi
+    if (( attempt >= max )); then
+      echo "ERROR: uploading '$blob' to $account/$container failed after $attempt attempts." >&2
+      echo "       The proxy binary must exist in the blob before the scale set first boots; a" >&2
+      echo "       missing one surfaces as a VM that starts and never serves. Last error:" >&2
+      sed 's/^/       /' "$patch_dir/upload.err" >&2
+      exit 1
+    fi
+    info "Upload attempt $attempt failed (likely Entra role propagation); retrying in ${delay}s"
+    attempt=$((attempt + 1))
+    sleep "$delay"
+  done
+}
+
+# Resolve the delivery URL + checksum the VM will use. Either honour an explicitly provided
+# (http(s)) PROXY_BINARY_URL, or seed the binary into the bootstrap blob and point at it. Sets
+# proxy_binary_url and proxy_binary_sha256. The URL is only needed by this script (the
+# --refresh-binary hot-swap); hub.bicep composes the same URL from the account it references.
 resolve_proxy_binary() {
   if [[ -n "$proxy_binary_url" ]]; then
     if [[ "$proxy_binary_url" != http://* && "$proxy_binary_url" != https://* ]]; then
@@ -153,17 +210,10 @@ resolve_proxy_binary() {
   # Pin the checksum to the exact bytes we host — no dependence on a mutable upstream.
   proxy_binary_sha256="$(sha256sum "$binfile" | awk '{print $1}')"
 
-  ensure_bootstrap_storage
   info "Uploading binary to ${bootstrap_storage_account}/${bootstrap_container}/${bootstrap_blob_name}"
-  az storage blob upload \
-    --account-name "$bootstrap_storage_account" \
-    --container-name "$bootstrap_container" \
-    --name "$bootstrap_blob_name" \
-    --file "$binfile" \
-    --auth-mode key \
-    --overwrite \
-    --only-show-errors >/dev/null
-  proxy_binary_url="https://${bootstrap_storage_account}.blob.core.windows.net/${bootstrap_container}/${bootstrap_blob_name}"
+  upload_with_retry "$bootstrap_storage_account" "$bootstrap_container" "$bootstrap_blob_name" "$binfile"
+  proxy_binary_url="$(az storage account show --name "$bootstrap_storage_account" --resource-group "$hub_rg" \
+    --query "primaryEndpoints.blob" -o tsv)${bootstrap_container}/${bootstrap_blob_name}"
   info "Delivery URL (in-tenant): $proxy_binary_url"
   info "SHA256: $proxy_binary_sha256"
 }
@@ -237,38 +287,13 @@ fi
 step "Setting up workload identity (setup-identity.sh)"
 "$repo_root/scripts/setup-identity.sh"
 
-step "Resolving / seeding proxy binary"
-resolve_proxy_binary
-
-# Idempotent, but tracked anyway: it runs once per image and the second call has nothing to do.
-# Must be called from the parent shell — import_image runs inside a command substitution, so an
-# assignment made there would not survive.
-ensure_demo_acr() {
-  [[ -n "$acr_ready" ]] && return 0
-
-  local rg_create_args tag_pairs
-  rg_create_args=()
-  if [[ -n "$resource_group_tags" ]]; then
-    read -r -a tag_pairs <<<"$resource_group_tags"
-    rg_create_args+=(--tags "${tag_pairs[@]}")
-  fi
-  info "Ensuring spoke resource group '$spoke_rg' in '$location'"
-  az group create --name "$spoke_rg" --location "$location" --only-show-errors "${rg_create_args[@]}" >/dev/null
-  info "Ensuring ACR '$acr_name' (Basic)"
-  az acr create \
-    --name "$acr_name" \
-    --resource-group "$spoke_rg" \
-    --location "$location" \
-    --sku Basic \
-    --admin-enabled false \
-    --only-show-errors >/dev/null
-
-  acr_ready=1
-}
-
-# Import one GHCR image into the demo ACR. Both the sample app and the control plane run in the
-# CAE subnet, whose egress floor opens MCR and this ACR only — GHCR is not reachable from there,
-# so every image the platform runs has to come through here.
+# Import one GHCR image into the registry. Every application in this deployment runs in a Container
+# Apps subnet whose egress floor opens MCR and this registry only — GHCR is not reachable from
+# there — so every image the platform runs has to come through here.
+#
+# `az acr import` is a SERVER-SIDE pull: the registry service fetches from GHCR itself. That is why
+# it works without a subnet, and why moving the registry to the hub resource group changes nothing
+# here beyond which group it is looked up in.
 # Args: <source ref> <repo name in acr> <dockerfile path, for the build-it-yourself hint>
 import_image() {
   local source="$1" repo="$2" dockerfile="$3"
@@ -354,7 +379,7 @@ prepare_image() {
 }
 
 container_registry_name=""
-acr_ready=""
+bootstrap_done=""
 acr_logged_in=""
 local_image_tag=""
 
@@ -377,10 +402,36 @@ if [[ "$build_images_locally" == "true" ]]; then
   info "Building images locally with $container_cli, tagged :$local_image_tag"
 fi
 
-if [[ -z "$sample_app_image" ]]; then
-  step "Preparing sample-app image in a private ACR"
+rg_tags_json="$(python3 - "$resource_group_tags" <<'PY'
+import json,sys
+pairs=sys.argv[1].split()
+print(json.dumps(dict(p.split("=",1) for p in pairs)))
+PY
+)"
+
+# Whether a registry is needed at all, decided BEFORE phase 1 runs. Setting SAMPLE_APP_IMAGE,
+# CONTROL_PLANE_IMAGE and PORTAL_IMAGE to references that are already pullable skips the registry
+# entirely — nothing to import, nothing to pull from, no AcrPull to grant. Phase 1 runs before
+# image preparation, but the decision is knowable here, so it is passed in rather than assumed.
+needs_registry=false
+[[ -z "$sample_app_image" ]] && needs_registry=true
+[[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]] && needs_registry=true
+[[ "$deploy_portal" == "true" && -z "$portal_image" ]] && needs_registry=true
+
+# ── Phase 1 ───────────────────────────────────────────────────────────────────────────────────
+# Both artifact stores, then both artifacts, all before main.bicep creates the compute that
+# fetches them.
+deploy_bootstrap
+
+step "Seeding the proxy binary"
+resolve_proxy_binary
+
+if [[ "$needs_registry" == "true" ]]; then
   container_registry_name="$acr_name"
-  ensure_demo_acr
+fi
+
+if [[ -z "$sample_app_image" ]]; then
+  step "Preparing sample-app image in the platform registry"
   sample_app_image="$(prepare_image "$sample_image_source" sample-app src/SampleApp/Dockerfile)"
 fi
 
@@ -388,17 +439,13 @@ fi
 # the topology: DEPLOY_CONTROL_PLANE=true opts in, and everything below (its image, the bicep
 # flag, the state seed) follows from that one switch.
 if [[ "$deploy_control_plane" == "true" && -z "$control_plane_image" ]]; then
-  step "Preparing control-plane image in a private ACR"
-  container_registry_name="$acr_name"
-  ensure_demo_acr
+  step "Preparing control-plane image in the platform registry"
   control_plane_image="$(prepare_image "$control_plane_image_source" control-plane src/ControlPlane/Dockerfile)"
 fi
 
 # Mode 3.
 if [[ "$deploy_portal" == "true" && -z "$portal_image" ]]; then
-  step "Preparing management-console image in a private ACR"
-  container_registry_name="$acr_name"
-  ensure_demo_acr
+  step "Preparing management-console image in the platform registry"
   portal_image="$(prepare_image "$portal_image_source" portal src/Portal/Dockerfile)"
 fi
 
@@ -470,13 +517,6 @@ print(doc[sys.argv[2]])
 PY
 }
 
-rg_tags_json="$(python3 - "$resource_group_tags" <<'PY'
-import json,sys
-pairs=sys.argv[1].split()
-print(json.dumps(dict(p.split("=",1) for p in pairs)))
-PY
-)"
-
 # az takes a Bicep array parameter as JSON on the command line. An empty list means no network
 # restriction, which is the demo default; a non-empty one restricts the console to those ranges.
 portal_allowed_source_ips_json="$(python3 - "$portal_allowed_source_ips" <<'PYEOF'
@@ -492,7 +532,7 @@ jwks_url="$(read_json JWKS_URL)"
 tenant_id="$(read_json tenantId)"
 
 step "Deploying infrastructure (az deployment sub create: $deployment_name)"
-info "This is the long one — provisions hub/spoke, proxy VM, ACA + sample app, etc."
+info "This is the long one — provisions hub/spoke (and mgmt, in Mode 2), proxy VM, ACA + apps."
 az deployment sub create \
   --name "$deployment_name" \
   --location "$location" \
@@ -509,8 +549,12 @@ az deployment sub create \
     expectAud="$expect_aud" \
     sampleAppImage="$sample_app_image" \
     containerRegistryName="$container_registry_name" \
+    bootstrapStorageAccountName="$bootstrap_storage_account" \
+    bootstrapContainerName="$bootstrap_container" \
+    bootstrapBlobName="$bootstrap_blob_name" \
+    mgmtResourceGroupName="$mgmt_rg" \
     resourceGroupTags="$rg_tags_json" \
-    proxyBinaryUrl="$proxy_binary_url" \
+    proxyBinaryUrl="$proxy_binary_url_override" \
     proxyBinarySha256="$proxy_binary_sha256" \
     vmAdminPublicKey="$vm_admin_public_key" \
     deployControlPlane="$deploy_control_plane" \
