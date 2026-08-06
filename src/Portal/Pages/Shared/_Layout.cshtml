@@ -13,6 +13,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@ViewData["Title"] · Egress console</title>
+    @* SVG only, and self-hosted: img-src is 'self' data:, and the mark is vector artwork that
+       has no raster fallback in the repo. Every browser the console targets renders it. *@
+    <link rel="icon" href="~/img/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="~/css/portal.css" />
 </head>
 @* hx-boost turns the tab bar's ordinary links into partial swaps while keeping them real routes,
@@ -34,7 +37,7 @@
     <div id="page-progress" class="page-progress" aria-hidden="true"></div>
     <header class="shell">
         <div class="brand">
-            <div class="chip" aria-hidden="true">EG</div>
+            <img class="chip" src="~/img/icon.svg" alt="" width="38" height="38" />
             <div class="wordmark"><div>Egress</div><div>Proxy</div><div>Console</div></div>
         </div>
         <nav class="tabs" aria-label="Console surfaces">
