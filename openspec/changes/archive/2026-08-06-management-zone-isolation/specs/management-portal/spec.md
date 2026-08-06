@@ -1,11 +1,24 @@
 ## MODIFIED Requirements
 
-### Requirement: The portal is read-only in every direction
+### Requirement: The portal is read-only
 
-The management portal SHALL NOT hold any role that permits writing, and SHALL NOT be able to reach
-a credential that permits writing. This covers the audit trail as well as policy: the workspace
-shared key authenticates an append to a custom table, so being able to *read* that key is a write
-capability on `EgressProxy_CL`.
+The management portal SHALL NOT write policy. It SHALL NOT call `PUT /rulesets/{name}` or
+`DELETE /rulesets/{name}`, and it SHALL hold no write role on the allowlist storage account.
+Its only non-`GET` call to the control plane SHALL be `POST /rulesets/{name}:check`, which
+writes nothing.
+
+Read-only SHALL hold in every direction, not only towards policy. The portal SHALL NOT be able to
+reach a credential that permits writing, which covers the audit trail: the workspace shared key
+authenticates an append to a custom table, so being able to *read* that key is a write capability
+on `EgressProxy_CL`.
+
+#### Scenario: Portal composes a change without applying it
+
+- **WHEN** an operator composes a candidate ruleset change in the portal
+- **THEN** the portal validates it via `POST /rulesets/{name}:check`, renders the returned
+  `added`/`removed`/`bound`/`unbound` diff, and emits a copyable command that would apply the
+  change through the control-plane API
+- **AND** neither the control-plane state nor the rendered allowlist is modified
 
 #### Scenario: Portal identity holds no write role
 

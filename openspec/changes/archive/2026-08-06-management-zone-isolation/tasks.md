@@ -282,7 +282,11 @@ Still open, and needing a live check rather than an ARM read:
       the CLI (or a dedicated service principal with client credentials). Not done unasked
 - [x] 10.15 Open the console and confirm every surface still reads — policy through the
       control-plane API, decisions from Log Analytics, and the runtime schematic from ARM
-- [ ] 10.16 `teardown.sh` removes all three resource groups
+- [x] 10.16 `teardown.sh` removes all three resource groups. Ran against both deployments: the
+      Mode 3 one deleted all three, and the Mode 1 one deleted its two and skipped
+      `rg-egress-m1-mgmt` with `does not exist` — which exercises the tolerance the script
+      needed once the management group became conditional. Zero `egress` resource groups remain
+      in the subscription
 - [x] 10.17 Run the review checklist in `SECURITY_GUIDELINES.md`
 
 ## 11. Observability and the audit trail's write path
