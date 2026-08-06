@@ -344,7 +344,7 @@ trust model completely untouched, and it avoids a side-channel edit that the nex
 pipeline run would silently revert, `PUT` being a full replace.
 
 `:check` is therefore the only non-`GET` the console ever issues against this API, and the only
-one it is allowed to grow. Its Azure permissions match: `Reader` + `Monitoring Reader` on the hub
+one it is allowed to grow. Its Azure permissions match: `Reader` + `Log Analytics Reader` on the hub
 resource group and **no write role anywhere** — in particular no `Storage Blob Data Contributor`
 on the allowlist container, so the identity that renders the console cannot reach the blob the
 proxy reads even if the console is wrong about what it may do.
@@ -390,11 +390,43 @@ nothing — the same fail-static reasoning that keeps the proxy independent of t
 further out. `src/Portal.Tests/OutageTests` pins the direction of those dependencies.
 
 Its own egress goes direct rather than through the proxy (`NO_PROXY` in
-[`infra/modules/spoke.bicep`](../infra/modules/spoke.bicep)), for the same reason: a tool that
+[`infra/modules/mgmt.bicep`](../infra/modules/mgmt.bicep)), for the same reason: a tool that
 reports on the data plane must not depend on the data plane's health to say that it is unhealthy.
+In the three-zone topology that is no longer only a `NO_PROXY` entry — there is no network route
+from the management zone to the proxy at all.
 
 Operational detail — configuration, the local loop, and the contract the surfaces are built
 against — is in [`src/Portal/README.md`](../src/Portal/README.md).
+
+> **Editing the blobs directly bypasses the renderer.** `allowlist.json` is a pure projection of
+> `rulesets.json`, and it is produced **only inside an API write** — `RulesetService` renders and
+> publishes it as part of committing a change. Nothing watches the state blob. So writing a patched
+> `rulesets.json` by hand does not re-render anything: the proxy keeps serving the previous
+> projection, and the two blobs silently disagree until the next API push overwrites the rendered
+> one. `deploy.sh` gets away with it because it seeds **both** blobs, consistently, before the
+> control plane has ever written either. Outside that seeding case, go through the API.
+
+## Where it runs
+
+In its own zone: a management resource group, its own virtual network and network security group,
+and a Container Apps environment shared with no workload. The console runs there too — the two move
+as a pair, because the console reaches the API by app name over the environment's internal network.
+
+**Nothing peers with that network.** Every dependency the control plane has is a PaaS endpoint —
+blob storage for the two blobs, Entra for the JWKS it validates caller tokens against — so no route
+to the proxy's network or to any workload network is required, and none exists. Two properties
+follow that were previously only conventions:
+
+- **The control plane cannot depend on the proxy it configures.** Not because `NO_PROXY` says so,
+  but because there is no path.
+- **No workload can reach it over the network.** A workload pipeline calls the API over its public
+  ingress with a token the API validates; nothing inside a workload subnet has a route to the
+  management subnet, and the workload subnet's egress floor denies the Internet.
+
+The zone exists only when the control plane does. `deployControlPlane` defaults to `false`, and
+Mode 1 — the default deployment — creates no management resource group, network, environment,
+identity or role assignment. See [`docs/architecture.md`](architecture.md) and
+[`infra/README.md`](../infra/README.md).
 
 ## Setup
 
@@ -424,12 +456,15 @@ identity keeps `Storage Blob Data Contributor`, and
                   controlPlaneImage=<acr>.azurecr.io/control-plane:<tag> \
                   containerRegistryName=<acr> ...
    ```
-   `containerRegistryName` is what grants the control plane's identity `AcrPull`; without it the
-   container app has no way to pull from the registry.
+   `containerRegistryName` names the registry in the **hub** resource group, and is what makes the
+   management environment's dedicated pull identity get `AcrPull`; without it the container app has
+   no way to pull from the registry.
 
-   Either route creates the control plane's user-assigned identity **in the hub**, next to the
-   storage it owns, grants it `Storage Blob Data Contributor`, and runs its container in the
-   spoke's managed environment. The proxy's identity keeps `Storage Blob Data Reader`.
+   Either route creates the control plane's user-assigned identity **in the management resource
+   group**, with the compute it belongs to, grants it `Storage Blob Data Contributor` on the
+   configuration storage account **in the hub** — the grant lives with the resource, not with the
+   identity — and runs its container in the management zone's own Container Apps environment. The
+   proxy's identity keeps `Storage Blob Data Reader`.
 2. **Seed the state blob.** [`scripts/deploy.sh`](../scripts/deploy.sh) does this automatically
    when the control plane is deployed: it uploads
    [`allowlist/rulesets.json`](../allowlist/rulesets.json) — rulesets **and** the platform

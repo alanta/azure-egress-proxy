@@ -1,16 +1,54 @@
 # Azure deployment (WP5)
 
-This directory deploys the full hub/spoke demo with one command:
+This directory deploys the full three-zone demo with one command:
 
 ```bash
 scripts/deploy.sh
 ```
 
+## Two phases, and why
+
+`deploy.sh` runs **two** subscription-scoped deployments, because compute cannot boot until the
+artifacts it fetches at start-up already exist — and neither a blob upload nor an image push is an
+ARM resource a single template could sequence:
+
+```
+  binary  ──must exist before──▶  the proxy VMSS runs cloud-init
+  images  ──must exist before──▶  the container apps' first pull
+```
+
+| Phase | Template | Creates |
+|---|---|---|
+| 1 — artifacts | `infra/bootstrap.bicep` | the **hub resource group**, the bootstrap storage account holding the proxy binary, and the container registry |
+| — | `deploy.sh` | uploads the binary (`--auth-mode login`, with a bounded retry for Entra role propagation), imports or builds the three images |
+| 2 — deployment | `infra/main.bicep` | everything else; references both artifact stores as existing |
+
+Phase 1 owns the hub resource group; phase 2 creates the spoke and management groups.
+`teardown.sh` deletes all three regardless of which phase made them.
+
 ## What gets deployed
 
-- **Hub RG**: proxy subnet, internal LB, VMSS (Azure Linux 3.0 arm64), UAMI, public IP prefix, allowlist storage, Log Analytics + `EgressProxy_CL` table + DCR + AMA.
-- **Spoke RG**: ACA environment (workload profiles), NSG egress floor, sample app (exposed on its ACA external ingress), a Basic ACR hosting the sample app image.
-- **Cross-RG**: hub↔spoke peering and private DNS zone `egress.internal` with `proxy` A record.
+- **Hub RG** (*platform*): proxy subnet, internal LB, VMSS (Azure Linux 3.0 arm64), public IP prefix, allowlist storage, bootstrap storage, the container registry, Log Analytics + `EgressProxy_CL` table + DCR + AMA. Every grant on a shared resource is declared here, next to the resource it grants on.
+- **Spoke RG** (*workload*): ACA environment (workload profiles), NSG egress floor, sample app (exposed on its ACA external ingress).
+- **Mgmt RG** (*management*, Mode 2 only): its own VNet, NSG, ACA environment, the control-plane API and the console. **Peered with nothing** — every dependency is a PaaS endpoint, so no route to the hub or the spoke is needed and none exists. See [docs/architecture.md](../docs/architecture.md).
+- **Cross-RG**: hub↔spoke peering and private DNS zone `egress.internal` with `proxy` A record. The management network is deliberately not linked to the zone.
+
+**Mode 1 is the default.** With `deployControlPlane` false there is no management resource group,
+network, environment or identity at all.
+
+## Redeploying an existing environment
+
+Resources move between resource groups in the three-zone layout, and **no migration path is
+built**. An environment deployed under the old two-group layout must be torn down and redeployed:
+
+```bash
+scripts/teardown.sh   # all three groups; tolerates ones that do not exist
+scripts/deploy.sh
+```
+
+Detection for the in-place case is deliberately not implemented — the case is a one-time
+transition on a reference deployment, and a half-working migration is worse than a documented
+teardown.
 
 ## Parameters
 
@@ -18,25 +56,29 @@ scripts/deploy.sh
 
 | Parameter | Default | Purpose |
 |---|---|---|
-| `location` | _(required)_ | Azure region for both RGs |
-| `hubResourceGroupName` | `rg-egress-hub` | Hub RG |
+| `location` | _(required)_ | Azure region for all RGs |
+| `hubResourceGroupName` | `rg-egress-hub` | Hub RG — created by `bootstrap.bicep`, referenced as existing here |
 | `spokeResourceGroupName` | `rg-egress-spoke` | Spoke RG |
+| `mgmtResourceGroupName` | `rg-egress-mgmt` | Management RG; created only when `deployControlPlane` is true |
 | `namePrefix` | `egress` | Resource naming prefix |
 | `deployerPrincipalId` | _(required)_ | Blob write RBAC target |
 | `tenantId` | _(required)_ | Entra tenant used for JWT validation |
 | `jwksUrl` | _(required)_ | JWKS endpoint for proxy JWT verification |
 | `expectIss` | _(required)_ | Expected JWT issuer |
 | `expectAud` | _(required)_ | Expected JWT audience |
-| `proxyBinaryUrl` | latest release URL | linux-arm64 proxy binary URL |
+| `proxyBinaryUrl` | `''` | Override for the URL cloud-init fetches the binary from. Empty composes it from `bootstrapStorageAccountName`, which is where `deploy.sh` seeds it |
+| `bootstrapStorageAccountName` | _(required)_ | Bootstrap account created by `bootstrap.bicep`, holding the proxy binary |
 | `proxyBinarySha256` | _(required)_ | SHA256 for binary integrity check |
 | `vmAdminPublicKey` | _(required)_ | SSH public key for break-glass VM access |
 | `sampleAppImage` | `mcr.microsoft.com/dotnet/samples:aspnetapp` | Sample app image (deploy.sh overrides this with the ACR-imported release image) |
-| `containerRegistryName` | `''` | Existing ACR in the spoke RG hosting the sample/control-plane images; empty disables ACR wiring (and the control plane's `AcrPull`) |
+| `containerRegistryName` | `''` | ACR in the **hub** RG hosting all three platform images, created by `bootstrap.bicep`; empty disables ACR wiring (and both `AcrPull` grants) |
 | `deployControlPlane` | `false` | Deploy the control-plane API (Mode 2). Its identity becomes the only writer of the allowlist blobs |
 | `controlPlaneImage` | `''` | Control-plane image; required when `deployControlPlane` is true (deploy.sh sets this to the ACR-imported release image) |
 | `proxyVmSku` | `Standard_B2pts_v2` | VMSS instance SKU (smallest ARM64 burstable; see the burst matrix below) |
 | `proxyInstanceCount` | `2` | VMSS instance count |
 | `proxyPublicIpPrefixLength` | `31` | Known egress CIDR size |
+| `mgmtVnetCidr` | `10.2.0.0/22` | Management VNet. Peered with nothing, so no conflict is possible — the range continues the pattern for legibility |
+| `mgmtSubnetCidr` | `10.2.0.0/23` | Management subnet |
 | `proxyIdleTimeoutInMinutes` | `4` | Idle timeout on both tunnel legs (LB rule + instance public IP), max 30. Clients must close idle pooled tunnels sooner — see [production-hardening.md § Idle timeouts](../docs/production-hardening.md#idle-timeouts--the-stale-tunnel-contract) |
 
 ## Identity bootstrap
@@ -54,7 +96,8 @@ It uses **token version v2** (`requestedAccessTokenVersion=2`) and emits:
 ## Scripts
 
 - `scripts/setup-identity.sh`: idempotent app registration + generated identity file.
-- `scripts/deploy.sh`: runs identity setup, creates a Basic ACR and imports the sample-app image from GHCR (set `GHCR_USERNAME`/`GHCR_TOKEN` while the source image is private, or `SAMPLE_APP_IMAGE` to skip the ACR), deploys infra, patches `allowlist/allowlist.json` with sample-app MI client ID, uploads blob (`--auth-mode login`), prints the sample app URL.
+- `scripts/deploy.sh`: runs identity setup, deploys the artifact phase (hub RG, bootstrap storage, Basic ACR in the **hub** RG), seeds the proxy binary, imports the sample-app image from GHCR (set `GHCR_USERNAME`/`GHCR_TOKEN` while the source image is private, or `SAMPLE_APP_IMAGE` to skip the ACR), deploys infra, patches `allowlist/allowlist.json` with sample-app MI client ID, uploads blob (`--auth-mode login`), prints the sample app URL.
+  Setting `SAMPLE_APP_IMAGE`, `CONTROL_PLANE_IMAGE` and `PORTAL_IMAGE` to already-pullable references skips the registry entirely — phase 1 then deploys none, and no `AcrPull` is granted.
   `DEPLOY_CONTROL_PLANE=true` additionally imports the `control-plane` image, deploys the control plane (Mode 2) and seeds its `rulesets.json` state blob; `CONTROL_PLANE_IMAGE` skips the import, `CONTROL_PLANE_IMAGE_SOURCE` picks a different source image. See [docs/control-plane.md](../docs/control-plane.md).
   `DEPLOY_PORTAL=true` (which requires `DEPLOY_CONTROL_PLANE=true`, since the console reads the API) deploys the read-only management console, creating its `egress-portal-console` Entra app registration — application object, service principal, and ID token issuance, all three of which sign-in needs — if `PORTAL_AUTH_CLIENT_ID` is unset; supply that variable instead and the registration is left alone, in which case it needs those same three things; `PORTAL_ALLOWED_SOURCE_IPS` is a comma-separated CIDR allow list for its ingress, empty meaning no network restriction. See [docs/control-plane.md](../docs/control-plane.md) § The management console.
   `BUILD_IMAGES_LOCALLY=true` builds all three images from the working tree with docker or podman and pushes them to the same ACR, instead of importing the published ones — what you want for a change that has not been released yet. Images are tagged with the commit they were built from, so a deployed revision names its source; `CONTAINER_CLI` picks the builder.

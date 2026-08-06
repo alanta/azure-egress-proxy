@@ -53,7 +53,20 @@ module workspace 'br/public:avm/res/operational-insights/workspace:0.15.0' = {
     dataRetention: 30
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
-      disableLocalAuth: false
+      // The workspace shared key is a WRITE credential: it authenticates the legacy Data Collector
+      // API, which appends rows to custom tables — including EgressProxy_CL, the audit trail this
+      // deployment exists to produce. Disabling local auth means the key cannot ingest at all, so
+      // reading it buys nothing.
+      //
+      // This does NOT break either ingestion path, which was verified against a live deployment
+      // rather than assumed: the proxy's rows arrive through AMA + the DCR, and the applications'
+      // telemetry through workspace-based Application Insights. Both authenticate with Entra, and
+      // both kept flowing with this set to true.
+      //
+      // The console's role assignment (hub.bicep) is the second control: Log Analytics Reader
+      // rather than Monitoring Reader, because the latter's bare `*/read` grants
+      // workspaces/sharedKeys/read.
+      disableLocalAuth: true
     }
   }
 }

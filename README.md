@@ -23,7 +23,7 @@ The repo contains everything to see it work:
 | Piece | Where |
 |---|---|
 | The proxy (Go, single static binary) | [`proxy/`](proxy/) |
-| Hub + spoke Azure deployment (Bicep, AVM modules) | [`infra/`](infra/), [`scripts/`](scripts/) |
+| Three-zone Azure deployment — workload / data plane / management (Bicep, AVM modules) | [`infra/`](infra/), [`scripts/`](scripts/) |
 | Sample workload on Azure Container Apps | [`src/SampleApp/`](src/) |
 | Lift-ready .NET client library (proxy + credential wiring) | [`src/EgressProxy.Client/`](src/) |
 | Local dev loop (Aspire: proxy + Azurite + mock IdP + sample) | [`src/AppHost/`](src/) |
@@ -69,9 +69,12 @@ platform guarantee in Azure).
 
 ## Quickstart — Azure
 
-One command deploys the whole demo (hub + spoke, proxy VMSS, sample app behind Front
-Door): `./scripts/deploy.sh` — see [infra/README.md](infra/README.md) for parameters,
-the monthly cost table, and `./scripts/teardown.sh` (the off switch). To run it from
+One command deploys the whole demo (proxy VMSS, sample app on its own ACA external
+ingress, and in Mode 2 a separate management zone): `./scripts/deploy.sh`. It runs two deployments — an artifact phase that creates the hub
+resource group, the bootstrap storage account and the registry and then fills both, and the main
+deployment that consumes them; compute cannot boot before the binary and the images exist. See
+[infra/README.md](infra/README.md) for parameters, the monthly cost table, and
+`./scripts/teardown.sh` (the off switch, which removes all three resource groups). To run it from
 GitHub Actions instead, set up OIDC per [docs/github-setup.md](docs/github-setup.md) and
 use the **Deploy** workflow. Then `./scripts/demo.sh` exercises allow/deny and prints the
 KQL for the audit trail in `EgressProxy_CL`.

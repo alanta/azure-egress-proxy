@@ -1,29 +1,88 @@
 # Architecture
 
-A **hub-and-spoke** topology. The proxy lives in the hub; workloads live in spokes and
-reach it over VNet peering. The only sanctioned path to arbitrary third-party HTTPS is the
-proxy; an NSG on the workload subnet denies direct Internet egress, so bypassing the proxy
-fails closed.
+**Three zones**, not two. Hub-and-spoke is the axis the deployment started on, and it is the
+wrong one: what it actually has is three populations with different trust postures.
+
+```
+  workload zone            data-plane zone           management zone
+  ─────────────            ───────────────           ───────────────
+  runs untrusted code      parses attacker-          writes the allowlist,
+  the proxy exists         controlled CONNECTs       reads every audit row
+  to constrain             for a living              and all ARM state
+
+  spoke / sample app       hub / proxy VMSS          mgmt / control plane + console
+```
+
+The proxy lives in the hub; workloads live in spokes and reach it over VNet peering. The only
+sanctioned path to arbitrary third-party HTTPS is the proxy; an NSG on the workload subnet denies
+direct Internet egress, so bypassing the proxy fails closed.
+
+The management plane — the [control plane](control-plane.md) (Mode 2) and the
+[console](../src/Portal/README.md) (Mode 3) — is separated from **both** of the others, in its own
+resource group, virtual network and Container Apps environment. "Move it to the hub" would have
+replaced one bad adjacency with another: the VMSS nodes take hostile input by design, so the hub is
+not trusted infrastructure either.
 
 ```mermaid
 flowchart LR
-    subgraph spoke [Spoke VNet]
+    subgraph spoke [Spoke VNet — workload zone]
         APP[Sample app<br/>Azure Container Apps<br/>HTTPS_PROXY + MI token]
         NSG[NSG egress floor<br/>deny Internet<br/>allow proxy :4750]
     end
-    subgraph hub [Hub VNet]
+    subgraph hub [Hub VNet — data-plane zone]
         LB[Internal LB<br/>proxy.egress.internal:4750]
         VMSS[VMSS: egress-proxy<br/>Public IP Prefix egress]
         ST[(Allowlist blob<br/>egress-config/allowlist.json)]
+        BIN[(Bootstrap blob<br/>proxy binary)]
+        ACR[(Container registry)]
         LAW[(Log Analytics<br/>EgressProxy_CL)]
+    end
+    subgraph mgmt [Mgmt VNet — management zone]
+        CP[Control plane<br/>sole writer of the allowlist]
+        PORTAL[Console<br/>read-only]
     end
     USER((Client)) -->|HTTPS| APP
     APP -->|CONNECT + Basic MI-JWT| LB --> VMSS
     VMSS -->|allowed FQDNs only| NET((Internet))
     VMSS -->|managed identity, ETag poll| ST
+    VMSS -->|boot fetch| BIN
     VMSS -->|AMA/DCR| LAW
     APP -.blocked by NSG.-> NET
+    CP -->|blob write, public endpoint| ST
+    PORTAL -->|internal DNS, same environment| CP
+    PORTAL -->|ARM + Log Analytics| LAW
+    APP -.no route.- mgmt
+    VMSS -.no route.- mgmt
 ```
+
+**The management network peers with nothing, and that is the design rather than an omission.**
+Everything the management plane reaches is a PaaS endpoint — blob storage, Log Analytics, ARM,
+Entra, the registry — so no route to the hub or the spoke is required, and none is created. The
+console reaches policy through the control-plane API, and both are applications of the same
+Container Apps environment, so that call never leaves it.
+
+That is stronger than a deny rule. Both other NSGs carry an `allow-vnet` any/any, so a same-VNet
+placement would have depended on a deny rule sitting above it and never being reordered. No route
+is not a rule that can be got wrong — and it makes one property true by construction: **the control
+plane cannot depend on the data plane it configures.**
+
+**One consequence worth naming.** The console reads scale-set state, prefix consumption and Monitor
+metrics from ARM, so its subnet carries an `AzureResourceManager` egress allow. An NSG sees a
+subnet, not a container app, so while the console lived in the spoke the sample workload inherited
+that allowance. Moving it moved the rule with it; the workload egress floor is now one destination
+narrower.
+
+**The zone exists only in Mode 2.** `deployControlPlane` defaults to `false`, so the default
+deployment — proxy, allowlist blob, sample app — creates no management resource group, network,
+environment or identity. The condition is `deployControlPlane` rather than either flag, because the
+console reads policy through the API and holds no role on the blob: it is not a valid deployment on
+its own.
+
+**Two deployment phases.** Compute cannot boot until the artifacts it fetches at start-up exist,
+and neither a blob upload nor an image push is an ARM resource a template could sequence. So
+`infra/bootstrap.bicep` creates the hub resource group, the bootstrap storage account and the
+registry; `scripts/deploy.sh` fills both; `infra/main.bicep` consumes them. See
+[infra/README.md](../infra/README.md).
 
 ## Design decisions
 

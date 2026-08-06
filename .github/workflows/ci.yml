@@ -111,6 +111,28 @@ jobs:
             az bicep build --file "$file"
           done
 
+      - name: Check NSG rule description lengths
+        # ARM rejects a security rule description over 140 characters, and `az bicep build` does
+        # NOT catch it — it is preflight validation, not compilation. Without this check the
+        # failure surfaces twenty minutes into a deployment, after the resource groups, the
+        # registry and the scale set have already been created. Cheap here, expensive there.
+        run: |
+          if [ ! -d infra ]; then exit 0; fi
+          python3 - <<'PY'
+          import glob, re, sys
+          limit, bad = 140, 0
+          for path in sorted(glob.glob('infra/**/*.bicep', recursive=True)):
+              src = open(path, encoding='utf-8').read()
+              for m in re.finditer(r"description:\s*'((?:[^'\\]|\\.)*)'", src):
+                  value = m.group(1).replace("\\'", "'")
+                  if len(value) > limit:
+                      line = src[:m.start()].count('\n') + 1
+                      print(f"::error file={path},line={line}::NSG rule description is "
+                            f"{len(value)} chars, limit is {limit}")
+                      bad += 1
+          sys.exit(1 if bad else 0)
+          PY
+
   shell:
     name: Shell script lint
     runs-on: ubuntu-latest

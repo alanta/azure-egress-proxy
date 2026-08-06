@@ -10,10 +10,12 @@ documented simplification here:
 | Allowlist storage: **public endpoint, Entra-only RBAC** (`allowSharedKeyAccess: false`) | `publicNetworkAccess: Disabled` + **private endpoint** (`privatelink.blob.core.windows.net`); allowlist writes then need network reach (VNet-integrated runner/agent or deployment script) |
 | Sample app **openly exposed on its ACA external ingress** (no ingress gate — this demo is about *egress*, so ingress is intentionally left simple) | Put a WAF in front (**Front Door Premium + Private Link origin** to an internal-only Container Apps environment — no public origin at all), or restrict ingress and reach the app over private connectivity |
 | One shared allowlist document, centrally written | Per-module blobs with path-scoped RBAC (write isolation), or a validating control-plane API (see [ROADMAP](../ROADMAP.md)) |
-| Sample image in a **Basic ACR** with NSG allows for `AzureContainerRegistry` **and** `Storage.<region>` (below Premium, ACR serves layer data from shared Azure Storage — the Storage allow makes any in-region storage account reachable, softening the egress floor) | **ACR Premium + private endpoint**: pulls stay on the VNet and both NSG allows disappear |
+| Platform images in a **Basic, public ACR**, with NSG allows for `AzureContainerRegistry` **and** `Storage.<region>` on all three subnets (below Premium, ACR serves layer data from shared Azure Storage — the Storage allow makes any in-region storage account reachable, softening the egress floor). Its *placement* is no longer a trade-off: it is in the platform resource group, where a resource serving all three zones belongs | **ACR Premium + private endpoint**: pulls stay on the VNet and both NSG allows disappear. On the management subnet the `Storage.<region>` allow would still be needed — the control plane writes the allowlist blobs over the same tag |
 | Management console on **external ACA ingress**, with an *optional* source-IP allow list (`PORTAL_ALLOWED_SOURCE_IPS`, empty by default so the demo is runnable from a laptop) | Internal-only ingress reached over private connectivity, or Front Door Premium + Private Link as for the sample app — plus Conditional Access on its app registration. It is an admin surface for a security control, not a sample workload |
 | Console sign-in uses an app-registration **client secret**, minted by `deploy.sh` on every run (`az ad app credential reset`) and passed to Bicep as a deployment parameter, where it lands in a container-app secret | A certificate or federated credential instead, held in Key Vault and referenced by the container app, so no secret value ever travels through a deployment parameter or a shell |
-| Console and sample workload **share one Container Apps subnet**, so the `AzureResourceManager` allow the console needs is open to the workload too (an ACA environment takes one subnet, and an NSG rule cannot name a container app) | Put the admin surface in its own environment and subnet, with an NSG that opens ARM to it alone — the console is the only thing here that reads the deployment's own state, and the egress floor should say so |
+| **Control-plane API on external ACA ingress**, with its RS256/JWKS check as the only gate | Internal-only ingress reached over private connectivity. Mode 2 has to be demonstrable — a workload team's pipeline calls this API — and a reference implementation cannot assume ExpressRoute, a VPN, Entra Private Access, or a self-hosted runner in the management VNet |
+| Both storage accounts keep **`networkAcls.defaultAction: Allow`** (public endpoint, Entra-only RBAC) | Subnet rules: the proxy subnet for reads, the management subnet for the control plane's writes. They are cheap and free, and they break all three upload paths — the binary, the allowlist seed, and `demo.sh`'s swaps — which run from a laptop or a GitHub-hosted runner in no subnet at all. Making them work needs a temporary IP-rule dance around every deployment |
+| The two storage accounts (**config** and **bootstrap**) stay separate even though container-scoped RBAC could merge them | Keep them separate. Access rights are not the argument — the **network ACL is per account**, so a merged account would have to admit both the proxy subnet and the management subnet, giving the control plane a network path to the proxy binary that only RBAC would stop. Theoretical while `defaultAction` is `Allow`; it is the reason not to merge them once subnet rules arrive |
 | Single region, small VMSS | ≥2 instances across availability zones (already the default here), CPU/connection autoscale, prefix sized for SNAT (64k ports per instance IP) |
 | `encryptionAtHost` defaults **off** (deploys on any subscription without feature registration) | Register `Microsoft.Compute/EncryptionAtHost` and deploy with `encryptionAtHost=true` |
 
@@ -24,7 +26,7 @@ handling, managed-identity-only data plane, structured audit logging.
 ## The management console concentrates read power
 
 The console ([`src/Portal/`](../src/Portal/), Mode 3's read half) writes nothing. Its identity
-holds `Reader` + `Monitoring Reader` on the hub resource group and **no write role anywhere** — in
+holds `Reader` + `Log Analytics Reader` on the hub resource group and **no write role anywhere** — in
 particular no `Storage Blob Data Contributor` on the allowlist container — and the only non-`GET`
 it makes against the control-plane API is `:check`, the dry run. That is a real boundary and it is
 enforced in the deployment, not just in the code.
@@ -39,7 +41,17 @@ which partner, and when they started — is one page.
 
 So treat it as an admin surface, not as a dashboard:
 
-- **Do not widen its Azure roles.** `Reader` + `Monitoring Reader`, scoped to the hub resource
+- **Azure SDK log levels.** The management apps set `Logging:LogLevel:Azure` to `Warning`. At
+  `Information` the SDK dominates the console stream — `Azure.Identity` emits MSAL cache and token
+  metrics, and `Azure.Core[5]` logs every HTTP response with its full header set. `Warning` keeps
+  credential and request *failures*, which are the half worth having on an admin surface.
+- **`Log Analytics Reader`, not `Monitoring Reader`.** Both look read-only and both are built on
+  `*/read` — but `*/read` matches `Microsoft.OperationalInsights/workspaces/sharedKeys/read`, and
+  the workspace shared key authenticates the legacy Data Collector API, which *appends rows to
+  custom tables*. A principal that can read that key can forge entries into `EgressProxy_CL`.
+  `Log Analytics Reader` excludes the key read in its `notActions`; `Monitoring Reader` does not.
+  The workspace additionally sets `disableLocalAuth: true`, so the key cannot ingest even if read.
+- **Do not widen its Azure roles.** `Reader` + `Log Analytics Reader`, scoped to the hub resource
   group, is the whole grant. A write role on it would also break the invariant in
   [AGENTS.md](../AGENTS.md) § Invariants, not just the least-privilege story.
 - **Gate reaching it**, per the ingress row above. The platform's built-in authentication runs

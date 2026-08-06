@@ -74,7 +74,10 @@ jobs:
         if: steps.preflight.outputs.run_deploy == 'true'
         env:
           LOCATION: ${{ inputs.location }}
-        run: bash scripts/deploy.sh "$LOCATION"
+        # No positional argument: deploy.sh reads LOCATION from the environment, and its argument
+        # parser accepts only --refresh-binary — so passing the region positionally made every run
+        # of this workflow exit 1 with "Unknown argument".
+        run: bash scripts/deploy.sh
 
       - name: Smoke test sample app endpoints
         if: steps.preflight.outputs.run_deploy == 'true' && steps.preflight.outputs.app_url != ''

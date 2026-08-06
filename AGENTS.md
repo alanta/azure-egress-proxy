@@ -95,7 +95,7 @@ do not reshape an endpoint, a status code, or a response body to make a screen e
 Human identity lives in the console (`src/Portal/`) and nowhere else; the API's identity model
 stays one RS256/JWKS check over service-principal tokens. The console reads that API and renders
 a *candidate* change; applying policy stays with the audited machine path, so it holds `Reader` +
-`Monitoring Reader` and no write role anywhere, and `POST /rulesets/{name}:check` — the dry run —
+`Log Analytics Reader` and no write role anywhere, and `POST /rulesets/{name}:check` — the dry run —
 is the only non-`GET` it may ever make. Giving the console a write is not a UI change; it is a
 change to who can widen an allowlist.
 
