@@ -11,7 +11,7 @@
 
    The design language is inherited from the ZEP project (~/Projects/Zure/zep), OUTSIDE this
    repository, so it cannot be found by searching here: the glass card treatment, the 62px
-   sticky header with logo chip and pill tab bar, the per-surface background tints, the 9px
+   sticky header with logo mark and pill tab bar, the per-surface background tints, the 9px
    0.14em uppercase mono micro-label, and the #1c2333 / #6a7287 / #9aa0b4 / #5b8def ramp.
 
    ADDED here, because ZEP has no equivalent and a security console needs one: the semantic
@@ -138,12 +138,13 @@ header.shell {
 
 .brand { display: flex; align-items: center; gap: 10px; flex: none;
          padding-right: 20px; border-right: 1px solid rgba(120,130,160,.20); }
+/* Departs from the mockup's gradient "EG" chip: the project has a mark of its own now
+   (wwwroot/img/icon.svg), and the mark is already a rotated rounded square carrying the same
+   violet ramp. Setting it in a chip would box a diamond inside a square. The shadow keeps the
+   header's lifted-glass depth the chip supplied, cast on the artwork instead of on a plate. */
 .brand .chip {
-  width: 40px; height: 40px; flex: none; border-radius: 11px;
-  display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #4a82e0, #6a6bd6 55%, #9a62cf);
-  box-shadow: 0 7px 18px -6px rgba(78,98,210,.75);
-  color: #fff; font-size: 15px; font-weight: 800; letter-spacing: -.02em;
+  width: 38px; height: 38px; flex: none; display: block;
+  filter: drop-shadow(0 7px 14px rgba(78,98,210,.55));
 }
 .brand .wordmark { font-family: var(--mono); font-size: 9px; line-height: 1.25;
                    text-transform: uppercase; letter-spacing: .04em; color: #7a8298; }

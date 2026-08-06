@@ -1,0 +1,35 @@
+<!-- The egress console mark: the header logo and the favicon. Authored in docs/icon.svg
+     (Inkscape); this is that file with the inkscape:*/sodipodi:* attributes and the XML
+     declaration stripped, the style= duplicates of fill collapsed, and width/height dropped so
+     CSS sizes it. Same viewBox, same geometry — when the source changes, re-strip rather than
+     editing here. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4.4979167 4.4979167" role="img">
+  <defs>
+    <linearGradient id="egress" x1="9" y1="18.17" x2="9" y2="1.506"
+                    gradientTransform="matrix(0.17923471,0.17923471,-0.17923471,0.17923471,1.2696762e-4,-0.04561029)"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9723b0"/>
+      <stop offset="0.109" stop-color="#af2dc8"/>
+      <stop offset="0.77499998" stop-color="#f23e9c"/>
+    </linearGradient>
+  </defs>
+  <rect x="-1.6340344" y="1.5464715" width="3.2680681" height="3.2680681" rx="0.14980441"
+        transform="rotate(-45)" fill="url(#egress)"/>
+  <path d="M 2.766249,1.2447911 2.259296,0.67892 c -0.014873,-0.0149953 -0.039117,-0.0149953 -0.05399,0 L 1.698354,1.2447911 c -0.024281,0.023933 -0.00722,0.065261 0.02687,0.0651 H 2.01292 c 0.01497,1.1e-6 0.027108,0.01213 0.02712,0.0271 V 3.3503433 H 2.426591 V 1.3369911 c -1.9e-5,-0.014305 0.011075,-0.026165 0.02535,-0.0271 h 0.286682 c 0.034465,8.63e-4 0.052194,-0.040909 0.02763,-0.0651 z"
+        fill="#ffffff"/>
+  <!-- Good1 — left -->
+  <g transform="translate(-2.5443174,-3.1234868e-4)">
+    <circle cx="3.5201633" cy="2.2719779" r="0.39899167" fill="#ffffff"/>
+    <circle cx="3.5201633" cy="2.2719779" r="0.22820313" fill="#5ea0ef"/>
+  </g>
+  <!-- Malicious — right -->
+  <g>
+    <circle cx="3.5201633" cy="2.2719779" r="0.39899167" fill="#ffffff"/>
+    <circle cx="3.5201633" cy="2.2719779" r="0.22820313" fill="#d63333"/>
+  </g>
+  <!-- Good2 — bottom, on the arrow's tail -->
+  <g transform="translate(-1.2873042,1.2797007)">
+    <circle cx="3.5201633" cy="2.2719779" r="0.39899167" fill="#ffffff"/>
+    <circle cx="3.5201633" cy="2.2719779" r="0.22820313" fill="#5ea0ef"/>
+  </g>
+</svg>

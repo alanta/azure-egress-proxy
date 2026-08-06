@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- The egress console mark. Editable source; src/Portal/wwwroot/img/icon.svg is this file with
+     the inkscape:* attributes stripped and is what the console serves. Same geometry, same
+     viewBox — keep them in sync.
+
+     The three gradient offsets (0, 0.109, 0.775) are deliberate: they are the ramp shape the
+     Azure icon set uses, which is why the plate reads as at home beside the Azure icons on the
+     Runtime surface. The colours are the console's own violet/magenta. -->
+
+<svg
+   width="17"
+   height="17"
+   viewBox="0 0 4.4979167 4.4979167"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="icon.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="45.254834"
+     inkscape:cx="4.7508737"
+     inkscape:cy="5.1486212"
+     inkscape:window-width="2560"
+     inkscape:window-height="1368"
+     inkscape:window-x="2304"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <defs
+     id="defs1">
+    <linearGradient
+       id="egress"
+       x1="9"
+       y1="18.17"
+       x2="9"
+       y2="1.506"
+       gradientTransform="matrix(0.17923471,0.17923471,-0.17923471,0.17923471,1.2696762e-4,-0.04561029)"
+       gradientUnits="userSpaceOnUse"
+       inkscape:label="egress">
+      <stop
+         offset="0"
+         stop-color="#9723b0"
+         id="stop9" />
+      <stop
+         offset="0.109"
+         stop-color="#af2dc8"
+         id="stop10" />
+      <stop
+         offset="0.77499998"
+         stop-color="#f23e9c"
+         id="stop11" />
+    </linearGradient>
+  </defs>
+  <rect
+     x="-1.6340344"
+     y="1.5464715"
+     width="3.2680681"
+     height="3.2680681"
+     rx="0.14980441"
+     transform="rotate(-45)"
+     fill="url(#egress)"
+     id="plate"
+     inkscape:label="egress"
+     style="fill:url(#egress)" />
+  <path
+     d="M 2.766249,1.2447911 2.259296,0.67892 c -0.014873,-0.0149953 -0.039117,-0.0149953 -0.05399,0 L 1.698354,1.2447911 c -0.024281,0.023933 -0.00722,0.065261 0.02687,0.0651 H 2.01292 c 0.01497,1.1e-6 0.027108,0.01213 0.02712,0.0271 V 3.3503433 H 2.426591 V 1.3369911 c -1.9e-5,-0.014305 0.011075,-0.026165 0.02535,-0.0271 h 0.286682 c 0.034465,8.63e-4 0.052194,-0.040909 0.02763,-0.0651 z"
+     fill="#ffffff"
+     id="path5"
+     inkscape:label="outbound"
+     style="fill:#ffffff;fill-opacity:1"
+     sodipodi:nodetypes="cccccccccccccc" />
+  <g
+     id="g10"
+     transform="translate(-1.2873042,1.2797007)"
+     inkscape:label="Good2">
+    <circle
+       style="opacity:1;fill:#ffffff;stroke-width:0.584384"
+       id="circle9"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.39899167" />
+    <circle
+       style="opacity:1;fill:#5ea0ef;fill-opacity:1;stroke-width:0.334238"
+       id="circle10"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.22820313" />
+  </g>
+  <g
+     id="g6"
+     inkscape:label="Malicious">
+    <circle
+       style="opacity:1;fill:#ffffff;stroke-width:0.584384"
+       id="circle5"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.39899167" />
+    <circle
+       style="opacity:1;fill:#d63333;stroke-width:0.334238;fill-opacity:1"
+       id="circle6"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.22820313" />
+  </g>
+  <g
+     id="g8"
+     transform="translate(-2.5443174,-3.1234868e-4)"
+     inkscape:label="Good1">
+    <circle
+       style="opacity:1;fill:#ffffff;stroke-width:0.584384"
+       id="circle7"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.39899167" />
+    <circle
+       style="opacity:1;fill:#5ea0ef;fill-opacity:1;stroke-width:0.334238"
+       id="circle8"
+       cx="3.5201633"
+       cy="2.2719779"
+       r="0.22820313" />
+  </g>
+</svg>

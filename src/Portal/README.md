@@ -113,6 +113,12 @@ The stylesheet in `wwwroot/css/portal.css` is a near-verbatim port of both; its 
 records the three mockup-only rules that were dropped, the one addendum that was added, and the
 single deliberate difference in the `.sx-*` block (icons served as files rather than inlined).
 
+One further departure: the mockups' gradient `EG` chip in the header is now the project mark,
+`wwwroot/img/icon.svg`, which also serves as the favicon. It is [`docs/icon.svg`](../../docs/icon.svg)
+— the editable Inkscape source — with the `inkscape:*` attributes stripped and `width`/`height`
+dropped so CSS sizes it; the geometry and viewBox are identical, so keeping them in sync is a
+re-strip, not a redraw. SVG is the only favicon format shipped; there is no `.ico` fallback.
+
 The design language is inherited from ZEP (`~/Projects/Zure/zep`, **outside this repository**).
 The semantic `allow` / `report` / `open` ramp is the one thing added here — held separate from the
 accent hue so policy state reads at a glance rather than requiring the label to be read.
