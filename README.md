@@ -79,6 +79,18 @@ GitHub Actions instead, set up OIDC per [docs/github-setup.md](docs/github-setup
 use the **Deploy** workflow. Then `./scripts/demo.sh` exercises allow/deny and prints the
 KQL for the audit trail in `EgressProxy_CL`.
 
+## Local dev container
+
+If you want to keep an agent or dev session off your host Azure CLI login, open the repo in a
+Dev Container from [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json). The
+image bakes in the repo's toolchain — .NET 10, Go 1.25.11, Azure CLI, and ShellCheck — and it
+keeps Azure state inside the container with `AZURE_CONFIG_DIR=/tmp/azure-cli` rather than
+reusing `~/.azure` from your laptop.
+It also runs Docker-in-Docker, so Aspire can start the local Azurite, proxy, and mock-idp
+containers.
+When opened from a linked Git worktree, it mounts the worktree parent so Git can resolve the
+shared repository metadata.
+
 ## FAQ / expected behaviours
 
 These all showed up during live validation — they're normal:
