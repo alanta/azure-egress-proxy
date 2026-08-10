@@ -500,6 +500,11 @@ module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.0' = 
     // Manual (the default) strands existing instances on the old model when the
     // deployment later adds the AMA extension — logs silently never arrive.
     upgradePolicyMode: 'Automatic'
+    // Automatically apply new OS image versions as they are released. The health
+    // extension (extensionHealthConfig below) is the required signal that allows
+    // Azure to roll the upgrade safely and to roll back on probe failures.
+    enableAutomaticOSUpgrade: true
+    disableAutomaticRollback: false
     // Non-zonal (regional) VMSS: the smallest burstable SKUs aren't offered in every
     // availability zone (e.g. B2pts_v2 is zone 3 only in swedencentral), and logical
     // zone numbers are per-subscription mappings, so pinning specific zones is fragile
