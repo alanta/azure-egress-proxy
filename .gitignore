@@ -17,3 +17,4 @@ obj/
 .DS_Store
 .claude/commands/opsx
 .claude/skills/openspec-*
+dotnet/runfile-discovery/azure-egress-proxy-a715d14cd01eba392ff9af31a424d4f4a3f39341a11db4f7647a7cb5cba7b31a/cache.staging.json

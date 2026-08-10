@@ -1,0 +1,28 @@
+{
+  "name": "azure-egress-proxy",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "privileged": true,
+  "containerEnv": {
+    "AZURE_CONFIG_DIR": "/tmp/azure-cli"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-bicep",
+        "ms-dotnettools.csharp",
+        "golang.Go",
+        "timonwong.shellcheck"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
