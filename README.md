@@ -83,13 +83,18 @@ KQL for the audit trail in `EgressProxy_CL`.
 
 If you want to keep an agent or dev session off your host Azure CLI login, open the repo in a
 Dev Container from [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json). The
-image bakes in the repo's toolchain — .NET 10, Go 1.25.11, Azure CLI, and ShellCheck — and it
+image bakes in the repo's toolchain — .NET 10, Azure CLI, and ShellCheck — and it
 keeps Azure state inside the container with `AZURE_CONFIG_DIR=/tmp/azure-cli` rather than
 reusing `~/.azure` from your laptop.
 It also runs Docker-in-Docker, so Aspire can start the local Azurite, proxy, and mock-idp
 containers.
-When opened from a linked Git worktree, it mounts the worktree parent so Git can resolve the
-shared repository metadata.
+For a linked Git worktree, select the **azure-egress-proxy (local worktree)** configuration in
+your Dev Containers client. It mounts the worktree parent so Git can resolve the shared repository
+metadata; the default configuration remains mount-free for Codespaces and ordinary local clones.
+
+For GitHub Codespaces, enable a prebuild for `.devcontainer/devcontainer.json` in the repository
+Codespaces settings. This builds the image and its Features ahead of time, keeping the toolchain
+installation off the interactive creation path.
 
 ## FAQ / expected behaviours
 

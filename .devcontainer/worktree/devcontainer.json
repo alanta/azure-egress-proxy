@@ -1,14 +1,18 @@
 {
-  "name": "azure-egress-proxy",
+  "name": "azure-egress-proxy (local worktree)",
   "build": {
-    "dockerfile": "Dockerfile",
-    "context": "."
+    "dockerfile": "../Dockerfile",
+    "context": ".."
   },
   "remoteUser": "vscode",
   "privileged": true,
   "containerEnv": {
     "AZURE_CONFIG_DIR": "/tmp/azure-cli"
   },
+  "mounts": [
+    "type=bind,source=${localWorkspaceFolder}/..,target=${localWorkspaceFolder}/.."
+  ],
+  "postCreateCommand": "git config --global --add safe.directory '${containerWorkspaceFolder}'",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },

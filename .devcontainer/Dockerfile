@@ -1,7 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/dotnet:2.1.4-10.0-noble
 
 ARG TARGETARCH
-ARG GO_VERSION=1.25.11
 ARG ASPIRE_CLI_VERSION=13.4.6
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,16 +19,6 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list \
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN case "$TARGETARCH" in \
-        amd64) go_arch=amd64 ;; \
-        arm64) go_arch=arm64 ;; \
-        *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tgz \
-    && rm -rf /usr/local/go \
-    && tar -C /usr/local -xzf /tmp/go.tgz \
-    && rm -f /tmp/go.tgz
-
 RUN dotnet tool install --tool-path /usr/local/bin aspire.cli --version "$ASPIRE_CLI_VERSION" \
     && chmod -R a+rX /usr/local/bin/.store
 
@@ -47,5 +36,3 @@ RUN mkdir -p /etc/apt/keyrings \
     && apt-get update \
     && apt-get install -y --no-install-recommends azure-cli \
     && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/usr/local/go/bin:${PATH}"
