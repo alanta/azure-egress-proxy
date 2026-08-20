@@ -7,7 +7,7 @@
        Aspire packages are supplied implicitly by Aspire.AppHost.Sdk/13.4.6 and are
        deliberately absent below - that SDK version is pinned in AppHost.csproj. -->
   <ItemGroup>
-    <PackageVersion Include="Azure.Core" Version="1.61.0" />
+    <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
     <!-- The portal's three read-only Azure clients: Log Analytics (KQL) and Azure Monitor
