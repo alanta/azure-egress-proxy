@@ -14,7 +14,7 @@
          metrics via Azure.Monitor.Query, VMSS capacity and instance view via
          ResourceManager.Compute, public-IP-prefix consumption via ResourceManager.Network. -->
     <PackageVersion Include="Azure.Monitor.Query" Version="1.7.1" />
-    <PackageVersion Include="Azure.ResourceManager.Compute" Version="1.16.0" />
+    <PackageVersion Include="Azure.ResourceManager.Compute" Version="1.17.0" />
     <PackageVersion Include="Azure.ResourceManager.Network" Version="1.16.1" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
