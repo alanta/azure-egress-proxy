@@ -12,7 +12,7 @@ param namePrefix string
 // which is why it carries no infrastructure grant of any kind: an identity that means "which
 // workload is asking" must not also mean "may read the registry". Image pull is the pull identity
 // below.
-module sampleAppIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
+module sampleAppIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
   name: 'sample-app-uami'
   params: {
     name: '${namePrefix}-sample-app-uami'
@@ -31,7 +31,7 @@ module sampleAppIdentity 'br/public:avm/res/managed-identity/user-assigned-ident
 // both because the environment is the trust boundary — a single identity would place the same
 // credential in the workload zone and the management zone, re-crossing the line this deployment
 // exists to draw.
-module acrPullIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
+module acrPullIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
   name: 'spoke-acr-pull-uami'
   params: {
     name: '${namePrefix}-spoke-acr-pull-uami'

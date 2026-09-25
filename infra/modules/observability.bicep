@@ -44,7 +44,7 @@ source
      or SeverityLevel in ("err", "crit", "alert", "emerg")
 '''
 
-module workspace 'br/public:avm/res/operational-insights/workspace:0.15.0' = {
+module workspace 'br/public:avm/res/operational-insights/workspace:0.16.1' = {
   name: 'workspace'
   params: {
     name: workspaceName

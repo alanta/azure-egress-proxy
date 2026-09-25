@@ -41,7 +41,7 @@ param deployContainerRegistry bool = true
 @description('Name of the container registry. Required when deployContainerRegistry is true.')
 param containerRegistryName string = ''
 
-module hubRg 'br/public:avm/res/resources/resource-group:0.4.0' = {
+module hubRg 'br/public:avm/res/resources/resource-group:0.4.4' = {
   name: 'bootstrap-hub-rg'
   params: {
     name: hubResourceGroupName
@@ -59,7 +59,7 @@ module hubRg 'br/public:avm/res/resources/resource-group:0.4.0' = {
 // An earlier draft also claimed the CLI-created account was on TLS1_0. Checked against the live
 // account, it was not: `az storage account create` has defaulted to TLS1_2 for years. Kept
 // explicit here anyway, because a default is not a guarantee.
-module bootstrapStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
+module bootstrapStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
   name: 'bootstrap-storage'
   scope: resourceGroup(hubResourceGroupName)
   params: {
@@ -116,7 +116,7 @@ module bootstrapStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
 // placement fix, not a hardening one. Premium with a private endpoint is the production
 // counterpart and is recorded in docs/production-hardening.md; it is also what would delete the
 // Storage.<region> rule every subnet carries today.
-module containerRegistry 'br/public:avm/res/container-registry/registry:0.9.3' = if (deployContainerRegistry) {
+module containerRegistry 'br/public:avm/res/container-registry/registry:0.13.1' = if (deployContainerRegistry) {
   name: 'bootstrap-acr'
   scope: resourceGroup(hubResourceGroupName)
   params: {
