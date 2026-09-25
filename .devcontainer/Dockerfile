@@ -1,7 +1,7 @@
-FROM mcr.microsoft.com/devcontainers/dotnet:2.1.4-10.0-noble
+FROM mcr.microsoft.com/devcontainers/dotnet:2.2.3-10.0-noble
 
 ARG TARGETARCH
-ARG ASPIRE_CLI_VERSION=13.4.6
+ARG ASPIRE_CLI_VERSION=13.5.4
 
 ENV DEBIAN_FRONTEND=noninteractive
 
