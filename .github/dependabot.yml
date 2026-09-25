@@ -3,29 +3,111 @@ version: 2
 # Actions are pinned to commit SHAs (see .github/workflows/*.yml), which means they
 # never drift on their own. Dependabot is what keeps those pins moving; without it,
 # pinning trades supply-chain risk for permanently stale, unpatched actions.
+#
+# Design notes (this file was rewritten after a ~15-PR backlog piled up, some from
+# August, because every bump - down to a single action patch release - opened its own
+# PR):
+#   - Every ecosystem groups its minor/patch bumps into one PR per week instead of one
+#     PR per package. Majors are left out of every group on purpose: they're the ones
+#     that actually need a human to read a changelog (a Dockerfile base image jumping a
+#     major, a NuGet major needing migration work, an Action major changing its inputs
+#     per SECURITY_GUIDELINES.md), so they still arrive as their own PR rather than
+#     hiding inside a batch.
+#   - Grouping only ever applies to `version-updates` (the default when `applies-to` is
+#     omitted from a group). Dependabot security updates are never grouped by this
+#     file, on any ecosystem - a security PR still opens immediately and on its own,
+#     which is what keeps a CVE fix from waiting behind the weekly batch.
+#   - Dependabot cannot bump the `go` directive in proxy/go.mod itself
+#     (dependabot-core#13520): a gomod PR bumps dependencies, never the toolchain
+#     version. That gap is covered by the weekly govulncheck job in
+#     .github/workflows/ci.yml, not by this file.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: gomod
     directory: /proxy
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "proxy"
+    groups:
+      gomod-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: nuget
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "nuget"
     ignore:
       # Keep OpenAPI stack on 2.x for now; 3.x requires explicit migration work.
       - dependency-name: Microsoft.OpenApi
         versions:
           - 3.*
     groups:
-      # The Aspire/Extensions packages version in lockstep; one PR per bump is noise.
+      # The Aspire/Extensions/AspNetCore packages version in lockstep; one PR per
+      # bump is noise.
       microsoft:
         patterns:
           - Microsoft.*
           - Aspire.*
+        update-types:
+          - "minor"
+          - "patch"
+      nuget-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - Microsoft.*
+          - Aspire.*
+        update-types:
+          - "minor"
+          - "patch"
+
+  # One entry, several directories: every Dockerfile in the repo (the proxy's own
+  # image plus the three .NET apps, the devcontainer, and mock-idp) on the same
+  # schedule and grouping policy as everything else.
+  - package-ecosystem: docker
+    directories:
+      - /proxy
+      - /src/SampleApp
+      - /src/ControlPlane
+      - /src/Portal
+      - /.devcontainer
+      - /mock-idp
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "docker"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

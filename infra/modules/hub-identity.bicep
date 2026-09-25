@@ -19,7 +19,7 @@ param namePrefix string
 
 // The proxy's identity: it reads the allowlist blob (Storage Blob Data Reader, granted in
 // hub.bicep next to the account) and it is what the Azure Monitor agent authenticates as.
-module proxyIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.5.0' = {
+module proxyIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
   name: 'proxy-uami'
   params: {
     name: '${namePrefix}-proxy-uami'

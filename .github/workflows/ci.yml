@@ -5,6 +5,12 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Weekly stdlib-vuln sweep: Dependabot cannot bump the `go` directive in go.mod
+    # (dependabot-core#13520), and release.yml now floats to the newest 1.25.x patch
+    # rather than pinning go.mod exactly, so this is the gate that actually catches a
+    # reachable stdlib CVE between manual bumps.
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
@@ -12,6 +18,9 @@ permissions:
 jobs:
   changes:
     runs-on: ubuntu-latest
+    # The weekly schedule run exists only to drive govulncheck; the path filter has no base
+    # to diff against on that trigger, so skip it and let every path-gated job fall through.
+    if: github.event_name != 'schedule'
     outputs:
       proxy: ${{ steps.filter.outputs.proxy }}
       dotnet: ${{ steps.filter.outputs.dotnet }}
@@ -23,7 +32,7 @@ jobs:
         with:
           persist-credentials: false
       - id: filter
-        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             proxy:
@@ -58,6 +67,32 @@ jobs:
             exit 0
           fi
           docker build proxy/
+
+  govulncheck:
+    name: Scan proxy module for reachable vulnerabilities
+    runs-on: ubuntu-latest
+    needs: changes
+    if: always() && (github.event_name == 'schedule' || needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflow == 'true')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        # Same version policy as release.yml: the 1.25 line, always its newest patch, so
+        # this job actually catches what a release build would ship.
+        with:
+          go-version: '1.25'
+          check-latest: true
+      - name: Install govulncheck
+        # v1.7.0 pinned explicitly (never @latest): golang.org/x/vuln v1.8.0 needs go >=1.26
+        # to install and would fail this job outright while the proxy stays on the 1.25 line.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+        env:
+          GOTOOLCHAIN: local
+      - name: Run govulncheck
+        working-directory: proxy
+        run: govulncheck ./...
 
   dotnet:
     name: Build and test .NET solution

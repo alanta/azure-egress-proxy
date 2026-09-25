@@ -355,7 +355,7 @@ var mgmtNsgRules = [
   }
 ]
 
-module mgmtNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
+module mgmtNsg 'br/public:avm/res/network/network-security-group:0.5.3' = {
   name: 'mgmt-nsg'
   params: {
     name: '${namePrefix}-mgmt-nsg'
@@ -364,7 +364,7 @@ module mgmtNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
   }
 }
 
-module mgmtVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
+module mgmtVnet 'br/public:avm/res/network/virtual-network:0.10.2' = {
   name: 'mgmt-vnet'
   params: {
     name: '${namePrefix}-mgmt-vnet'
@@ -384,7 +384,7 @@ module mgmtVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.6.0' = {
+module appInsights 'br/public:avm/res/insights/component:0.8.0' = {
   name: 'mgmt-app-insights'
   params: {
     name: '${namePrefix}-mgmt-ai'
@@ -397,7 +397,7 @@ module appInsights 'br/public:avm/res/insights/component:0.6.0' = {
 
 // The environment that hosts no workload. That is the requirement it exists to satisfy: management
 // compute is not co-tenant with the code the proxy exists to constrain.
-module managedEnvironment 'br/public:avm/res/app/managed-environment:0.13.0' = {
+module managedEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' = {
   name: 'mgmt-managed-env'
   params: {
     name: '${namePrefix}-mgmt-cae'
@@ -475,7 +475,7 @@ var resourceManagerHost = replace(replace(environment().resourceManager, 'https:
 // storage and the IdP (both in NO_PROXY) rather than through the proxy — the control plane must
 // not depend on the data plane it configures. In this topology that is no longer only a
 // convention: there is no network path from this zone to the proxy at all.
-module controlPlane 'br/public:avm/res/app/container-app:0.22.0' = {
+module controlPlane 'br/public:avm/res/app/container-app:0.23.0' = {
   name: 'control-plane'
   params: {
     registries: registries
@@ -579,7 +579,7 @@ module controlPlane 'br/public:avm/res/app/container-app:0.22.0' = {
 // admin surface for a security control rather than a sample workload, and it concentrates more
 // read power than anything else in the deployment. Internal-only ingress is the production
 // counterpart and is recorded as such in docs/production-hardening.md.
-module portal 'br/public:avm/res/app/container-app:0.22.0' = if (deployPortal) {
+module portal 'br/public:avm/res/app/container-app:0.23.0' = if (deployPortal) {
   name: 'portal'
   params: {
     registries: registries

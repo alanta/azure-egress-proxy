@@ -148,7 +148,7 @@ resource hubRg 'Microsoft.Resources/resourceGroups@2024-03-01' existing = {
   name: hubResourceGroupName
 }
 
-module spokeRg 'br/public:avm/res/resources/resource-group:0.4.0' = {
+module spokeRg 'br/public:avm/res/resources/resource-group:0.4.4' = {
   name: 'spoke-rg'
   params: {
     name: spokeResourceGroupName
@@ -163,7 +163,7 @@ module spokeRg 'br/public:avm/res/resources/resource-group:0.4.0' = {
 // deployControlPlane rather than either flag because the console requires the control plane: it
 // reads policy through the API and holds no role on the blob, so deployPortal alone is not a valid
 // deployment and does not need to bring a zone into existence on its own.
-module mgmtRg 'br/public:avm/res/resources/resource-group:0.4.0' = if (deployControlPlane) {
+module mgmtRg 'br/public:avm/res/resources/resource-group:0.4.4' = if (deployControlPlane) {
   name: 'mgmt-rg'
   params: {
     name: mgmtResourceGroupName
@@ -323,7 +323,7 @@ module spokeToHubPeering 'modules/peering.bicep' = {
   }
 }
 
-module privateDns 'br/public:avm/res/network/private-dns-zone:0.8.0' = {
+module privateDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
   name: 'private-dns'
   scope: resourceGroup(hubResourceGroupName)
   params: {

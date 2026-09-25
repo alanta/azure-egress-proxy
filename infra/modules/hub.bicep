@@ -166,7 +166,7 @@ var cloudInit = replace(
   '5'
 )
 
-module proxyNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
+module proxyNsg 'br/public:avm/res/network/network-security-group:0.5.3' = {
   name: 'proxy-nsg'
   params: {
     name: '${namePrefix}-proxy-nsg'
@@ -175,7 +175,7 @@ module proxyNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
   }
 }
 
-module hubVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
+module hubVnet 'br/public:avm/res/network/virtual-network:0.10.2' = {
   name: 'hub-vnet'
   params: {
     name: '${namePrefix}-hub-vnet'
@@ -390,7 +390,7 @@ resource proxyLoadBalancer 'Microsoft.Network/loadBalancers@2024-05-01' = {
   }
 }
 
-module allowlistStorage 'br/public:avm/res/storage/storage-account:0.32.0' = {
+module allowlistStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
   name: 'allowlist-storage'
   params: {
     name: take(replace('${namePrefix}${uniqueString(subscription().id, resourceGroup().name, 'allowlist')}', '-', ''), 24)
@@ -488,7 +488,7 @@ var vmssNicConfiguration = [
   }
 ]
 
-module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.0' = {
+module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.1' = {
   name: 'proxy-vmss'
   params: {
     name: '${namePrefix}-proxy-vmss'

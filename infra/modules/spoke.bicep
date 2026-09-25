@@ -241,7 +241,7 @@ var appsNsgRules = [
   }
 ]
 
-module appsNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
+module appsNsg 'br/public:avm/res/network/network-security-group:0.5.3' = {
   name: 'apps-nsg'
   params: {
     name: '${namePrefix}-apps-nsg'
@@ -250,7 +250,7 @@ module appsNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
   }
 }
 
-module spokeVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
+module spokeVnet 'br/public:avm/res/network/virtual-network:0.10.2' = {
   name: 'spoke-vnet'
   params: {
     name: '${namePrefix}-spoke-vnet'
@@ -270,7 +270,7 @@ module spokeVnet 'br/public:avm/res/network/virtual-network:0.9.0' = {
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.6.0' = {
+module appInsights 'br/public:avm/res/insights/component:0.8.0' = {
   name: 'sample-app-insights'
   params: {
     name: '${namePrefix}-sample-app-ai'
@@ -281,7 +281,7 @@ module appInsights 'br/public:avm/res/insights/component:0.6.0' = {
   }
 }
 
-module managedEnvironment 'br/public:avm/res/app/managed-environment:0.13.0' = {
+module managedEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' = {
   name: 'managed-env'
   params: {
     name: '${namePrefix}-cae'
@@ -339,7 +339,7 @@ resource caeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previe
 
 var sampleAppName = '${namePrefix}-sample-app'
 
-module sampleApp 'br/public:avm/res/app/container-app:0.22.0' = {
+module sampleApp 'br/public:avm/res/app/container-app:0.23.0' = {
   name: 'sample-app'
   params: {
     // Image pull is configured per application — Container Apps has no environment-level
