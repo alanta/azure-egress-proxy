@@ -219,20 +219,27 @@ func cidrRolesFromModules(mods []module) []cidrRole {
 	return out
 }
 
-// managedRoleFromRequest selects the identity mechanism. The token modes are env-driven
-// (token validation is independent of the allowlist source); netid derives its subnet map
-// from the fetched modules.
-func managedRoleFromRequest(mode string, mods []module) func(*http.Request) (string, error) {
+// newManagedRoleFunc selects the identity mechanism and returns the per-reload builder that
+// runManaged calls with each fetched module set. The token modes are env-driven (token
+// validation is independent of the allowlist source), so their role func, and with it the
+// JWKS client, is built once here and reused across reloads: rebuilding it per reload would
+// re-fetch the JWKS each time and leave the old client's refresh goroutine running. Only
+// netid derives anything from the modules: its subnet map.
+func newManagedRoleFunc(mode string) func(mods []module) func(*http.Request) (string, error) {
+	var fixed func(*http.Request) (string, error)
 	switch mode {
 	case "jwt":
-		return withRoleErrorDetail(newJWTRole())
+		fixed = withRoleErrorDetail(newJWTRole())
 	case "basic-jwt":
-		return withRoleErrorDetail(newBasicJWTRole())
+		fixed = withRoleErrorDetail(newBasicJWTRole())
 	case "basic-name":
-		return withRoleErrorDetail(newBasicNameRole())
+		fixed = withRoleErrorDetail(newBasicNameRole())
 	default:
-		return withRoleErrorDetail(netIDRoleFunc(cidrRolesFromModules(mods)))
+		return func(mods []module) func(*http.Request) (string, error) {
+			return withRoleErrorDetail(netIDRoleFunc(cidrRolesFromModules(mods)))
+		}
 	}
+	return func([]module) func(*http.Request) (string, error) { return fixed }
 }
 
 // runManaged renders the ACL from the allowlist blob and supervises smokescreen, restarting
@@ -245,6 +252,7 @@ func runManaged() {
 		poll = v
 	}
 	mode := os.Getenv("SMOKESCREEN_ID_MODE")
+	roleFor := newManagedRoleFunc(mode)
 
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -281,7 +289,7 @@ func runManaged() {
 		if err != nil || conf == nil {
 			logrus.Fatalf("could not create configuration: %v", err)
 		}
-		conf.RoleFromRequest = managedRoleFromRequest(mode, doc.Modules)
+		conf.RoleFromRequest = roleFor(doc.Modules)
 		conf.RejectResponseHandlerWithCtx = newRejectHandler(mode)
 		applyJSONLogging(conf)
 

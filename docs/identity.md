@@ -47,6 +47,15 @@ proxy's app registration, and the identity *in* it is the workload's own client 
 Locally, the mock IdP ([`mock-idp/`](../mock-idp/)) stands in for the token endpoint and
 JWKS; no Entra needed.
 
+In `jwt` and `basic-jwt` mode the proxy **does not start serving until it holds signing
+keys**. At startup it fetches `JWKS_URL` up to 30 times, a second apart. An unreachable
+URL, a non-200 response, bad JSON, or a key set with no usable keys each count as a
+failure. If every attempt fails, the process exits with the last error. Without this, the
+proxy would reject every token while its open port still passed the health probe. Once
+keys are loaded, the proxy refreshes them hourly, and at most every 5 minutes when a token
+carries an unknown key ID. A failed refresh keeps the cached keys. In managed mode an
+allowlist reload reuses the loaded keys, so a policy push never waits on the JWKS.
+
 ## Other modes (supported, situational)
 
 | Mode | Identity | Trust | Use |
