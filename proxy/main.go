@@ -27,7 +27,9 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -142,16 +144,8 @@ func newJWTValidator() func(token string) (string, error) {
 	iss := os.Getenv("EXPECT_ISS")
 	aud := os.Getenv("EXPECT_AUD")
 
-	// JWKS may not be up at boot; retry briefly.
-	var k keyfunc.Keyfunc
-	var err error
-	for i := 0; i < 30; i++ {
-		k, err = keyfunc.NewDefault([]string{jwksURL})
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
+	// The refresh goroutine runs for the life of the process, so its stop func is not needed.
+	k, _, err := loadJWKS(jwksURL, jwksLoadAttempts, time.Second)
 	if err != nil {
 		logrus.Fatalf("could not load JWKS from %s: %v", jwksURL, err)
 	}
@@ -172,6 +166,61 @@ func newJWTValidator() func(token string) (string, error) {
 		claims, _ := tok.Claims.(jwt.MapClaims)
 		return appIDFromClaims(claims)
 	}
+}
+
+const (
+	jwksLoadAttempts = 30
+	// jwksHTTPTimeout bounds each JWKS fetch, at startup and on refresh. jwkset's default is a
+	// minute, which would stretch the startup retries over half an hour on a black-holed URL.
+	jwksHTTPTimeout = 10 * time.Second
+)
+
+// loadJWKS fetches the JWKS and returns a Keyfunc only once it holds at least one key,
+// retrying up to attempts times (the IdP may not be up at boot). The proxy must not serve
+// without keys: it would fail closed, but its port would be open, so the health probe would
+// report an instance that can authenticate no one. keyfunc's defaults swallow a failed first
+// fetch and return an empty key set, so that is switched off here, and an empty or
+// all-unsupported set counts as a failure too. Once loaded, a failed refresh keeps the cached
+// keys: jwkset only replaces the set on a successful fetch. The returned func stops the
+// background refresh.
+func loadJWKS(jwksURL string, attempts int, wait time.Duration) (keyfunc.Keyfunc, context.CancelFunc, error) {
+	noErrorReturnFirstHTTPReq := false
+	override := keyfunc.Override{
+		HTTPTimeout:               jwksHTTPTimeout,
+		NoErrorReturnFirstHTTPReq: &noErrorReturnFirstHTTPReq,
+		RefreshErrorHandlerFunc: func(u string) func(context.Context, error) {
+			return func(_ context.Context, err error) {
+				logrus.Warnf("JWKS refresh from %s failed, keeping cached keys: %v", u, err)
+			}
+		},
+	}
+
+	var err error
+	for i := 1; i <= attempts; i++ {
+		// The refresh goroutine starts before the first fetch and lives until ctx ends, so a
+		// failed attempt must cancel its ctx.
+		ctx, cancel := context.WithCancel(context.Background())
+		var k keyfunc.Keyfunc
+		k, err = keyfunc.NewDefaultOverrideCtx(ctx, []string{jwksURL}, override)
+		if err == nil {
+			keys, readErr := k.Storage().KeyReadAll(ctx)
+			switch {
+			case readErr != nil:
+				err = readErr
+			case len(keys) == 0:
+				err = errors.New("JWKS contains no usable signing keys")
+			default:
+				logrus.Infof("loaded %d signing key(s) from JWKS %s", len(keys), jwksURL)
+				return k, cancel, nil
+			}
+		}
+		cancel()
+		logrus.Warnf("JWKS not loaded from %s (attempt %d/%d): %v", jwksURL, i, attempts, err)
+		if i < attempts {
+			time.Sleep(wait)
+		}
+	}
+	return nil, nil, err
 }
 
 // appIDFromClaims returns the app's own identity claim, the role. It is `appid` on Entra
