@@ -1,8 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sirupsen/logrus"
+	acl "github.com/stripe/smokescreen/pkg/smokescreen/acl/v1"
 )
 
 // Verifies the action field flows from the allowlist JSON into the rendered ACL, that the
@@ -100,5 +105,36 @@ func TestNormalizeAction(t *testing.T) {
 		if got := normalizeAction("m", in); got != want {
 			t.Errorf("normalizeAction(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Every rendered ACL must load in smokescreen, including the module-less deny-all one that a
+// first start without config, or an empty-allowlist push, produces. An empty `services:` key
+// loads as a missing list and smokescreen exits instead of serving deny-all.
+func TestRenderedACLLoads(t *testing.T) {
+	cases := map[string]allowlistDoc{
+		"no modules":               {},
+		"empty modules":            {Modules: []module{}},
+		"no modules with fallback": {Fallback: &fallback{AllowedHosts: []string{"login.microsoftonline.com"}}},
+		"modules":                  docWith("mod-a", "a.example"),
+	}
+	for name, doc := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "acl.yaml")
+			if err := os.WriteFile(path, []byte(renderSmokescreenACL("netid", doc.Modules, doc.Fallback)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			a, err := acl.New(logrus.New(), acl.NewYAMLLoader(path), nil)
+			if err != nil {
+				t.Fatalf("smokescreen rejected the rendered ACL: %v", err)
+			}
+			d, err := a.Decide(acl.DecideArgs{Service: "unknown", Host: "a.example"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Result != acl.Deny {
+				t.Errorf("unidentified request to a.example: got %v, want deny", d.Result)
+			}
+		})
 	}
 }

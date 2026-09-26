@@ -43,16 +43,24 @@ One atomic write = one consistent state, so there is no sentinel/marker object.
   present no/invalid token). It widens the default block from pure deny-all to a curated,
   platform-owned baseline. The default block is always `enforce`. Keep it minimal and
   watch its usage in the logs as a migration backlog.
-- **Fail closed** — if the blob is unreachable at first start, the proxy renders a
-  deny-all ACL and keeps retrying. Once it has config, it holds **last-known-good**
-  through transient blob outages.
+- **Fail closed** — if the proxy has no valid document at first start (blob unreachable,
+  or a document that does not parse), it renders a deny-all ACL and keeps retrying. Once it
+  has config, it holds **last-known-good** through transient blob outages, failed
+  downloads, and **invalid documents**: a push that is not valid JSON, or has a field of the
+  wrong type (say, `"modules": "all"`), is rejected. This is a decode check, not JSON
+  Schema validation: unknown fields are ignored. The proxy logs a warning naming the
+  rejected ETag and the parse error, keeps serving the previous allowlist without a restart
+  (open tunnels stay up), and does not download that version again until the blob changes.
+  A failed download is retried every poll. Last-known-good is never wider than what was
+  approved, so this does not weaken fail-closed. A document that parses is applied as it
+  is: `{}` or `{"modules": []}` is a legitimate deny-all push, not an error.
 - **Decommission** — delete the module's entry; that identity falls to the fallback/deny
   block on the next reload. Removal is fail-closed by construction.
 
 ## Propagation
 
 The proxy polls the ETag (default every 10 s, `POLL_SECONDS`); on change it downloads,
-renders the Smokescreen ACL, and restarts in-process (~4 s). End-to-end propagation is
+and if the document parses, renders the Smokescreen ACL and restarts in-process (~4 s). End-to-end propagation is
 dominated by the poll interval — measured at ~5 s with a 5 s poll.
 
 ## Write path

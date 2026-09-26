@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -128,8 +129,13 @@ func blobClient() (*blob.Client, error) {
 	return svc.ServiceClient().NewContainerClient(container).NewBlobClient(name), nil
 }
 
+// errInvalidAllowlist marks a document that downloaded but does not parse. Unlike a failed
+// download it will not fix itself, so the watcher remembers its ETag rather than retrying it.
+var errInvalidAllowlist = errors.New("invalid allowlist document")
+
 // fetchAllowlist downloads and parses the single JSON document, returning its ETag (the
-// change signal the watcher polls).
+// change signal the watcher polls). A parse failure wraps errInvalidAllowlist and still
+// returns the ETag, so the rejected version can be named and skipped.
 func fetchAllowlist(ctx context.Context, c *blob.Client) (allowlistDoc, *azcore.ETag, error) {
 	resp, err := c.DownloadStream(ctx, nil)
 	if err != nil {
@@ -142,7 +148,7 @@ func fetchAllowlist(ctx context.Context, c *blob.Client) (allowlistDoc, *azcore.
 	}
 	var doc allowlistDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return allowlistDoc{}, nil, fmt.Errorf("bad allowlist JSON: %w", err)
+		return allowlistDoc{}, resp.ETag, fmt.Errorf("%w: bad JSON: %w", errInvalidAllowlist, err)
 	}
 	sort.Slice(doc.Modules, func(i, j int) bool { return doc.Modules[i].ID < doc.Modules[j].ID })
 	return doc, resp.ETag, nil
@@ -171,7 +177,13 @@ func serviceName(mode string, m module) string {
 func renderSmokescreenACL(mode string, mods []module, fb *fallback) string {
 	var b strings.Builder
 	b.WriteString("# generated from the egress allowlist blob — do not edit\n")
-	b.WriteString("version: v1\nservices:\n")
+	// An empty `services:` decodes to nil, which smokescreen rejects as a missing list and
+	// exits; `services: []` is the empty list, so a module-less (deny-all) ACL still loads.
+	if len(mods) == 0 {
+		b.WriteString("version: v1\nservices: []\n")
+	} else {
+		b.WriteString("version: v1\nservices:\n")
+	}
 	for _, m := range mods {
 		fmt.Fprintf(&b, "  - name: %s\n    project: egress\n    action: %s\n    allowed_domains:\n", serviceName(mode, m), normalizeAction(m.ID, m.Action))
 		for _, h := range m.AllowedHosts {
@@ -242,9 +254,105 @@ func newManagedRoleFunc(mode string) func(mods []module) func(*http.Request) (st
 	return func([]module) func(*http.Request) (string, error) { return fixed }
 }
 
+// allowlistSource is where the allowlist document comes from: the blob, or a fake in tests.
+type allowlistSource interface {
+	// ETag returns the current version of the document without downloading it.
+	ETag(ctx context.Context) (*azcore.ETag, error)
+	// Fetch downloads and parses the document (see fetchAllowlist).
+	Fetch(ctx context.Context) (allowlistDoc, *azcore.ETag, error)
+}
+
+type blobSource struct{}
+
+func (blobSource) ETag(ctx context.Context) (*azcore.ETag, error) {
+	c, err := blobClient()
+	if err != nil {
+		return nil, err
+	}
+	props, err := c.GetProperties(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return props.ETag, nil
+}
+
+func (blobSource) Fetch(ctx context.Context) (allowlistDoc, *azcore.ETag, error) {
+	c, err := blobClient()
+	if err != nil {
+		return allowlistDoc{}, nil, err
+	}
+	return fetchAllowlist(ctx, c)
+}
+
+// allowlistWatch decides, one poll at a time, whether there is a new valid document to apply.
+// It remembers the ETag in force and the ETag of the last document that failed to parse, so
+// a bad push is logged once and skipped until the blob changes again.
+type allowlistWatch struct {
+	src      allowlistSource
+	applied  *azcore.ETag // ETag of the document in force; nil while serving fail-closed deny-all
+	rejected *azcore.ETag // ETag of the last document that did not parse
+}
+
+// poll checks the blob once and returns a document to apply, or ok=false to keep serving the
+// current one. Nothing here ever replaces a valid document with deny-all: an unreachable
+// blob, a failed download, or an unparseable document all keep last-known-good in force.
+func (w *allowlistWatch) poll(ctx context.Context) (doc allowlistDoc, ok bool) {
+	etag, err := w.src.ETag(ctx)
+	if err != nil {
+		if w.applied == nil {
+			logrus.Warnf("allowlist blob unreachable, %s: %v", w.holding(), err)
+		}
+		return allowlistDoc{}, false // hold last-known-good; retry next tick
+	}
+	if sameETag(etag, w.applied) || sameETag(etag, w.rejected) {
+		return allowlistDoc{}, false
+	}
+
+	doc, fetched, err := w.src.Fetch(ctx)
+	switch {
+	case errors.Is(err, errInvalidAllowlist):
+		if fetched == nil {
+			fetched = etag
+		}
+		w.rejected = fetched
+		logrus.Warnf("allowlist blob etag=%s rejected, %s until the blob changes: %v",
+			etagString(fetched), w.holding(), err)
+		return allowlistDoc{}, false
+	case err != nil:
+		logrus.Warnf("allowlist blob etag=%s could not be downloaded, %s; retrying: %v",
+			etagString(etag), w.holding(), err)
+		return allowlistDoc{}, false
+	}
+
+	w.applied, w.rejected = fetched, nil
+	ids := make([]string, len(doc.Modules))
+	for i, m := range doc.Modules {
+		ids[i] = m.ID
+	}
+	logrus.Infof("loaded allowlist blob: modules=%v fallback=%t etag=%s", ids, doc.Fallback != nil, etagString(fetched))
+	return doc, true
+}
+
+// holding describes what stays in force while a new document cannot be applied.
+func (w *allowlistWatch) holding() string {
+	if w.applied == nil {
+		return "staying FAIL-CLOSED (deny-all)"
+	}
+	return "keeping last-known-good etag=" + etagString(w.applied)
+}
+
+func sameETag(a, b *azcore.ETag) bool { return a != nil && b != nil && *a == *b }
+
+func etagString(e *azcore.ETag) string {
+	if e == nil {
+		return ""
+	}
+	return string(*e)
+}
+
 // runManaged renders the ACL from the allowlist blob and supervises smokescreen, restarting
-// it in-process whenever the blob's ETag changes. On startup with the blob unreachable it
-// renders a deny-all ACL (fail closed) and keeps retrying.
+// it in-process whenever a new valid document is published. On startup with no valid
+// document it renders a deny-all ACL (fail closed) and keeps retrying.
 func runManaged() {
 	outputFile := envOr("OUTPUT_FILE", "/render/acl.yaml")
 	poll := 10
@@ -254,83 +362,79 @@ func runManaged() {
 	mode := os.Getenv("SMOKESCREEN_ID_MODE")
 	roleFor := newManagedRoleFunc(mode)
 
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		c, err := blobClient()
-		var doc allowlistDoc
-		var etag *azcore.ETag
-		haveConfig := false
-		if err == nil {
-			if doc, etag, err = fetchAllowlist(ctx, c); err == nil {
-				haveConfig = true
+	w := &allowlistWatch{src: blobSource{}}
+	superviseAllowlist(context.Background(), w, time.Duration(poll)*time.Second,
+		func(doc allowlistDoc, quit <-chan interface{}) {
+			if err := writeFileAtomic(outputFile, renderSmokescreenACL(mode, doc.Modules, doc.Fallback)); err != nil {
+				logrus.Fatalf("write %s: %v", outputFile, err)
 			}
-		}
-		cancel()
-		if !haveConfig {
-			logrus.Warnf("allowlist blob unreachable, rendering FAIL-CLOSED (deny-all): %v", err)
-			doc = allowlistDoc{}
-		} else {
-			ids := make([]string, len(doc.Modules))
-			for i, m := range doc.Modules {
-				ids[i] = m.ID
+			conf, err := cmd.NewConfiguration(nil, nil)
+			if err != nil || conf == nil {
+				logrus.Fatalf("could not create configuration: %v", err)
 			}
-			et := ""
-			if etag != nil {
-				et = string(*etag)
-			}
-			logrus.Infof("rendered ACL from allowlist blob: modules=%v fallback=%t etag=%s", ids, doc.Fallback != nil, et)
-		}
+			conf.RoleFromRequest = roleFor(doc.Modules)
+			conf.RejectResponseHandlerWithCtx = newRejectHandler(mode)
+			applyJSONLogging(conf)
 
-		if err := writeFileAtomic(outputFile, renderSmokescreenACL(mode, doc.Modules, doc.Fallback)); err != nil {
-			logrus.Fatalf("write %s: %v", outputFile, err)
-		}
-
-		conf, err := cmd.NewConfiguration(nil, nil)
-		if err != nil || conf == nil {
-			logrus.Fatalf("could not create configuration: %v", err)
-		}
-		conf.RoleFromRequest = roleFor(doc.Modules)
-		conf.RejectResponseHandlerWithCtx = newRejectHandler(mode)
-		applyJSONLogging(conf)
-
-		// Watch the ETag; close quit (=> smokescreen shuts down, loop restarts it) when the
-		// blob changes, or when the blob becomes reachable after a fail-closed start.
-		quit := make(chan interface{})
-		stop := make(chan struct{})
-		go watchBlob(quit, stop, etag, haveConfig, time.Duration(poll)*time.Second)
-
-		logrus.Infof("starting smokescreen (managed, mode=%s, poll=%ds)", mode, poll)
-		smokescreen.StartWithConfig(conf, quit)
-		close(stop) // smokescreen returned (blob change or exit); stop the watcher
-		logrus.Info("smokescreen stopped; re-rendering and restarting")
-	}
+			logrus.Infof("starting smokescreen (managed, mode=%s, poll=%ds)", mode, poll)
+			smokescreen.StartWithConfig(conf, quit)
+			logrus.Info("smokescreen stopped")
+		})
 }
 
-// watchBlob polls the blob's ETag and closes quit when the config should be reapplied —
-// either the ETag changed, or the blob became reachable after a fail-closed start.
-func watchBlob(quit chan interface{}, stop chan struct{}, last *azcore.ETag, haveConfig bool, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+// allowlistPollTimeout bounds one poll: the ETag check plus, on a change, the download.
+const allowlistPollTimeout = 15 * time.Second
+
+// superviseAllowlist serves the allowlist (serve renders it and runs smokescreen until quit
+// closes) and restarts serve only when the watcher yields a new valid document, so a bad
+// push never drops open tunnels. It starts deny-all when no valid document can be loaded,
+// and returns when ctx ends.
+func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Duration,
+	serve func(doc allowlistDoc, quit <-chan interface{})) {
+	pctx, cancel := context.WithTimeout(ctx, allowlistPollTimeout)
+	doc, _ := w.poll(pctx) // no valid document: the zero doc renders deny-all
+	cancel()
+
 	for {
-		select {
-		case <-stop:
+		quit := make(chan interface{})
+		next := make(chan allowlistDoc, 1)
+		stop := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			t := time.NewTicker(every)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ctx.Done():
+					close(quit)
+					return
+				case <-t.C:
+					pctx, cancel := context.WithTimeout(ctx, allowlistPollTimeout)
+					d, ok := w.poll(pctx)
+					cancel()
+					if ok {
+						next <- d
+						close(quit)
+						return
+					}
+				}
+			}
+		}()
+
+		serve(doc, quit)
+		close(stop)
+		<-done // the watcher owns w while it runs; wait before the next one starts
+		if ctx.Err() != nil {
 			return
-		case <-t.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			c, err := blobClient()
-			if err != nil {
-				cancel()
-				continue
-			}
-			props, err := c.GetProperties(ctx, nil)
-			cancel()
-			if err != nil {
-				continue // hold last-known-good; retry next tick
-			}
-			if !haveConfig || last == nil || props.ETag == nil || *props.ETag != *last {
-				close(quit)
-				return
-			}
+		}
+		select {
+		case doc = <-next:
+			logrus.Info("re-rendering and restarting smokescreen with the new allowlist")
+		default:
+			// serve returned on its own; restart it on the same document
 		}
 	}
 }
