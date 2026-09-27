@@ -5,7 +5,8 @@
 // Smokescreen is designed to be embedded as a library so you can supply your own
 // RoleFromRequest — which is what this binary does.
 //
-// The identity mechanism is chosen at runtime via SMOKESCREEN_ID_MODE:
+// The identity mechanism is chosen at runtime via SMOKESCREEN_ID_MODE, which is required:
+// there is no default mode, and the proxy refuses to start without one (see config.go).
 //
 //	netid : identity = SOURCE SUBNET. The client cannot influence its source subnet, so
 //	        this is unspoofable and needs no client cooperation. Granularity is the
@@ -307,9 +308,11 @@ func newBasicJWTRole() func(*http.Request) (string, error) {
 	}
 }
 
+// roleFromRequest builds the standalone role func. The mode has already passed
+// requireIdentityConfig; the default branch is a backstop, and an unset mode is not netid.
 func roleFromRequest(mode string) func(*http.Request) (string, error) {
 	switch mode {
-	case "", "netid":
+	case "netid":
 		return withRoleErrorDetail(newNetIDRole())
 	case "jwt":
 		return withRoleErrorDetail(newJWTRole())
@@ -477,11 +480,7 @@ func applyJSONLogging(conf *smokescreen.Config) {
 // envEnabled reads a boolean opt-in from the environment. Unset means off, so every knob
 // spelled this way defaults to the quieter/safer behaviour.
 func envEnabled(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
+	return envEnabledIn(os.Getenv, name)
 }
 
 func main() {
@@ -497,6 +496,9 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("could not create configuration: %v", err)
 	} else if conf != nil {
+		// Refuse to start on a missing or wrong identity configuration, before anything
+		// listens (see config.go).
+		requireIdentityConfig(logrus.StandardLogger(), os.Getenv, false)
 		mode := os.Getenv("SMOKESCREEN_ID_MODE")
 		conf.RoleFromRequest = roleFromRequest(mode)
 		// Spells out why a request was rejected, and in the Basic identity models emits the

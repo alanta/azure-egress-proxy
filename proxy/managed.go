@@ -236,7 +236,8 @@ func cidrRolesFromModules(mods []module) []cidrRole {
 // validation is independent of the allowlist source), so their role func, and with it the
 // JWKS client, is built once here and reused across reloads: rebuilding it per reload would
 // re-fetch the JWKS each time and leave the old client's refresh goroutine running. Only
-// netid derives anything from the modules: its subnet map.
+// netid derives anything from the modules: its subnet map. The mode has already passed
+// requireIdentityConfig; netid is used only when named, and anything else is fatal.
 func newManagedRoleFunc(mode string) func(mods []module) func(*http.Request) (string, error) {
 	var fixed func(*http.Request) (string, error)
 	switch mode {
@@ -246,10 +247,13 @@ func newManagedRoleFunc(mode string) func(mods []module) func(*http.Request) (st
 		fixed = withRoleErrorDetail(newBasicJWTRole())
 	case "basic-name":
 		fixed = withRoleErrorDetail(newBasicNameRole())
-	default:
+	case "netid":
 		return func(mods []module) func(*http.Request) (string, error) {
 			return withRoleErrorDetail(netIDRoleFunc(cidrRolesFromModules(mods)))
 		}
+	default:
+		logrus.Fatalf("unknown SMOKESCREEN_ID_MODE=%q", mode)
+		return nil
 	}
 	return func([]module) func(*http.Request) (string, error) { return fixed }
 }
@@ -359,6 +363,9 @@ func runManaged() {
 	if v, err := strconv.Atoi(os.Getenv("POLL_SECONDS")); err == nil && v > 0 {
 		poll = v
 	}
+	// Refuse to start on a missing or wrong identity configuration, before the first blob
+	// poll and before anything listens (see config.go).
+	requireIdentityConfig(logrus.StandardLogger(), os.Getenv, true)
 	mode := os.Getenv("SMOKESCREEN_ID_MODE")
 	roleFor := newManagedRoleFunc(mode)
 
