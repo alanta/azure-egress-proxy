@@ -93,7 +93,9 @@ func jwksURLProblem(raw string, allowHTTP bool) string {
 	if err != nil {
 		return fmt.Sprintf("not a valid URL: %v", err)
 	}
-	if u.Scheme == "" || u.Host == "" {
+	// Hostname, not Host: "https://:443/keys" has Host ":443" but no host to fetch from.
+	// Checked before the scheme, so the http escape hatch gets the same check.
+	if u.Scheme == "" || u.Hostname() == "" {
 		return fmt.Sprintf("%q is not an absolute https URL", raw)
 	}
 	switch {

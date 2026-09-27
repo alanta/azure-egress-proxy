@@ -71,6 +71,10 @@ func TestIdentityConfigProblems(t *testing.T) {
 			[]string{"JWKS_URL"}, "not an absolute https URL"},
 		{"no host", goodJWTEnv(map[string]string{"JWKS_URL": "https:///keys"}),
 			[]string{"JWKS_URL"}, "not an absolute https URL"},
+		{"port but no host", goodJWTEnv(map[string]string{"JWKS_URL": "https://:443/keys"}),
+			[]string{"JWKS_URL"}, "not an absolute https URL"},
+		{"port only", goodJWTEnv(map[string]string{"JWKS_URL": "https://:443"}),
+			[]string{"JWKS_URL"}, "not an absolute https URL"},
 		{"unparseable", goodJWTEnv(map[string]string{"JWKS_URL": "https://idp.example/%zz"}),
 			[]string{"JWKS_URL"}, "not a valid URL"},
 
@@ -132,6 +136,10 @@ func TestIdentityConfigInsecureJWKSEscapeHatch(t *testing.T) {
 	})
 	if got := problemKeys(identityConfigProblems(envMap(stillChecked), true)); !reflect.DeepEqual(got, []string{"JWKS_URL", "EXPECT_ISS"}) {
 		t.Errorf("escape hatch must not relax anything but the scheme: keys = %v", got)
+	}
+	noHost := goodJWTEnv(map[string]string{allowInsecureJWKSEnv: "1", "JWKS_URL": "http://:8080/jwks"})
+	if got := problemKeys(identityConfigProblems(envMap(noHost), true)); !reflect.DeepEqual(got, []string{"JWKS_URL"}) {
+		t.Errorf("escape hatch must still require a host: keys = %v", got)
 	}
 }
 
