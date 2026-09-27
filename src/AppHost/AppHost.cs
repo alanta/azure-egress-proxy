@@ -46,6 +46,9 @@ var proxy = builder.AddDockerfile("proxy", "../../proxy")
     .WithArgs("--egress-acl-file", "/render/acl.yaml")
     .WithEnvironment("SMOKESCREEN_ID_MODE", "basic-jwt")
     .WithEnvironment("JWKS_URL", "http://mock-idp:8080/jwks")
+    // The mock IdP serves its JWKS over plain http, which the proxy refuses at startup unless
+    // told otherwise. Local development only: never set this in a deployment.
+    .WithEnvironment("JWKS_ALLOW_INSECURE_HTTP", "1")
     .WithEnvironment("EXPECT_ISS", tokenIssuer)
     .WithEnvironment("EXPECT_AUD", tokenAudience)
     .WithEnvironment("ALLOWLIST_BLOB_CONNECTION_STRING", azuriteConnectionStringForContainers)

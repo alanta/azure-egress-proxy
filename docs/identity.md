@@ -47,6 +47,41 @@ proxy's app registration, and the identity *in* it is the workload's own client 
 Locally, the mock IdP ([`mock-idp/`](../mock-idp/)) stands in for the token endpoint and
 JWKS; no Entra needed.
 
+### Startup check
+
+Before it loads keys, polls the allowlist, or opens a port, the proxy checks the identity
+configuration, in managed and standalone mode alike:
+
+| Key | Required | Rule |
+|---|---|---|
+| `SMOKESCREEN_ID_MODE` | always | one of `basic-jwt`, `jwt`, `basic-name`, `netid`, spelled exactly. There is **no default**: `netid` is used only when named |
+| `JWKS_URL` | `jwt`, `basic-jwt` | an absolute `https` URL with a host. Keys fetched over plain `http` can be replaced in transit |
+| `EXPECT_ISS` | `jwt`, `basic-jwt` | non-empty. An empty issuer switches golang-jwt's issuer check off, and since Entra signing keys are shared across tenants, it switches the tenant check off with it: any Entra token for the right audience would pass |
+| `EXPECT_AUD` | `jwt`, `basic-jwt` | non-empty. An empty audience rejects every token as "invalid audience", which hides the real cause |
+| `SUBNET_ROLES` | `netid`, standalone only | parses as `cidr=role,...`. Managed `netid` takes its subnets from `modules[].subnet` |
+
+If anything fails, the proxy logs **every** failing key with its reason in a single `fatal`
+line and exits with a non-zero status, for example:
+
+```text
+level=fatal msg="invalid identity configuration, refusing to start: JWKS_URL: \"http://idp/keys\" uses http; it must be https, because signing keys fetched over plain http can be replaced in transit (JWKS_ALLOW_INSECURE_HTTP=1 allows http for local development only); EXPECT_ISS: not set; without it the token issuer, and with it the tenant, is not checked; EXPECT_AUD: not set; every token would be rejected as having the wrong audience" invalid_config="[JWKS_URL EXPECT_ISS EXPECT_AUD]"
+```
+
+It does **not** fall back to a deny-all listener. A misconfigured identity is not a policy
+gap the allowlist's fail-closed path can cover (see [allowlist.md](allowlist.md) § Fail
+closed): an open port passes the TCP health probe, so the instance would look healthy to the
+load balancer and to automatic OS upgrades while authenticating no one, or authenticating
+too many. Under systemd (`Restart=always`) each restart fails the same way, with the same
+log line, and the instance never reports healthy until the configuration is fixed.
+
+**Local development only:** the Aspire stack's mock IdP serves its JWKS over plain `http`.
+`JWKS_ALLOW_INSECURE_HTTP=1` lets `JWKS_URL` use `http`. It is off unless set, relaxes the
+scheme and nothing else (the URL must still be well-formed, the issuer and audience are
+still required), and logs a warning at every start. `src/AppHost` sets it; no deployment
+template does, and none should.
+
+### Signing keys
+
 In `jwt` and `basic-jwt` mode the proxy **does not start serving until it holds signing
 keys**. At startup it fetches `JWKS_URL` up to 30 times, a second apart. An unreachable
 URL, a non-200 response, bad JSON, or a key set with no usable keys each count as a
@@ -67,3 +102,7 @@ allowlist reload reuses the loaded keys, so a policy push never waits on the JWK
 
 All modes return a **role** that must match a module in the allowlist; an empty/invalid
 identity lands on the fallback/deny block.
+
+The mode is always named explicitly (see [Startup check](#startup-check)). An unset
+`SMOKESCREEN_ID_MODE` used to mean `netid`, and in managed mode so did a misspelled one,
+which silently swapped JWT identity for network position. Both are now a startup failure.

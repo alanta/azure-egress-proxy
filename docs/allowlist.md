@@ -54,6 +54,10 @@ One atomic write = one consistent state, so there is no sentinel/marker object.
   A failed download is retried every poll. Last-known-good is never wider than what was
   approved, so this does not weaken fail-closed. A document that parses is applied as it
   is: `{}` or `{"modules": []}` is a legitimate deny-all push, not an error.
+  Fail-closed covers the **allowlist**, not the identity configuration: a missing or invalid
+  `SMOKESCREEN_ID_MODE`, `JWKS_URL`, `EXPECT_ISS` or `EXPECT_AUD` stops the proxy at startup
+  with no listener at all, rather than serving deny-all — see
+  [identity.md](identity.md#startup-check).
 - **Decommission** — delete the module's entry; that identity falls to the fallback/deny
   block on the next reload. Removal is fail-closed by construction.
 
@@ -103,7 +107,8 @@ change. Setup, RBAC, and `curl` examples: [control-plane.md](control-plane.md).
 | `ALLOWLIST_BLOB_CONNECTION_STRING` | Local/dev alternative (Azurite); with `ALLOWLIST_CONTAINER` (default `egress-config`) and `ALLOWLIST_BLOB` (default `allowlist.json`) |
 | `POLL_SECONDS` | ETag poll interval (default 10) |
 | `OUTPUT_FILE` | Rendered ACL path (default `/render/acl.yaml`) |
-| `SMOKESCREEN_ID_MODE` | Identity mode: `basic-jwt` (recommended), `basic-name`, `jwt`, `netid` — see [identity.md](identity.md) |
+| `SMOKESCREEN_ID_MODE` | **Required**, no default. Identity mode: `basic-jwt` (recommended), `basic-name`, `jwt`, `netid` — see [identity.md](identity.md). The token modes also require `JWKS_URL` (https), `EXPECT_ISS` and `EXPECT_AUD`; the proxy checks all of them at startup and refuses to start if any is missing or invalid |
+| `JWKS_ALLOW_INSECURE_HTTP` | `1` lets `JWKS_URL` use plain `http`. **Local development only** (the Aspire mock IdP); off unless set — see [identity.md](identity.md#startup-check) |
 | `LOG_PREAUTH_DETAIL` | `1` keeps the per-handshake `Unable to get role for request` diagnostic line, suppressed by default — see [observability.md](observability.md) |
 
 Setting either `ALLOWLIST_BLOB_*` variable turns on managed mode (the watch/render/reload

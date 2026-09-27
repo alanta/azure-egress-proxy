@@ -14,8 +14,8 @@ import (
 )
 
 // Managed mode must route every identity mode, not only netid: basic-name resolves the
-// Basic username with no env/JWKS dependency, and the default (netid) derives its subnet
-// map from the fetched modules. (jwt/basic-jwt are covered by the JWKS-reuse test below.)
+// Basic username with no env/JWKS dependency, and netid (only when named) derives its
+// subnet map from the fetched modules. (jwt/basic-jwt are covered by the JWKS-reuse test below.)
 func TestManagedRoleFromRequestBasicName(t *testing.T) {
 	f := newManagedRoleFunc("basic-name")(nil)
 	req, _ := http.NewRequest("CONNECT", "https://example.com:443", nil)
@@ -27,7 +27,7 @@ func TestManagedRoleFromRequestBasicName(t *testing.T) {
 	}
 }
 
-func TestManagedRoleFromRequestNetIDDefault(t *testing.T) {
+func TestManagedRoleFromRequestNetID(t *testing.T) {
 	mods := []module{
 		{ID: "mod-a", Subnet: "172.30.10.0/24"},
 		{ID: "no-subnet"}, // token-mode module: skipped by the subnet map, not fatal
