@@ -115,7 +115,7 @@ module bootstrapStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
 // SKU and public endpoint carry across from the imperative `az acr create` unchanged — this is a
 // placement fix, not a hardening one. Premium with a private endpoint is the production
 // counterpart and is recorded in docs/production-hardening.md; it is also what would delete the
-// Storage.<region> rule every subnet carries today.
+// Storage.<region> rule the apps and management subnets carry today.
 module containerRegistry 'br/public:avm/res/container-registry/registry:0.13.1' = if (deployContainerRegistry) {
   name: 'bootstrap-acr'
   scope: resourceGroup(hubResourceGroupName)
