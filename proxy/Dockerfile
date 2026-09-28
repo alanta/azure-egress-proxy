@@ -2,7 +2,7 @@
 # Azure-native RoleFromRequest identity modes). See main.go and docs/identity.md.
 # The build stage runs on the build platform and cross-compiles to the target arch, so a
 # multi-platform buildx build never emulates the Go toolchain (vet/test run once, natively).
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27-alpine AS build
 RUN apk add --no-cache git
 ENV CGO_ENABLED=0
 ARG TARGETOS TARGETARCH
