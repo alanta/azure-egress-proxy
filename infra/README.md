@@ -38,21 +38,22 @@ network, environment or identity at all.
 
 ## Proxy health signal
 
-Both the internal load balancer and the scale set's Application Health extension probe **TCP 4750**.
-The proxy opens that port only once it is ready: configuration valid, signing keys loaded and a
-first allowlist fetched from the blob ([docs/health.md](../docs/health.md)). So a new instance, or
-one rolled onto a new OS image, reports unhealthy until it can actually make decisions, and an image
-that can't is rolled back. After that, a blob or IdP outage leaves the port open on last-known-good.
+The scale set's Application Health extension probes **`http://localhost:4751/readyz`** from inside
+each instance (5 s interval, 2 probes, 120 s grace period). `/readyz` answers `200` only once the
+proxy is ready: configuration valid, signing keys loaded and a first allowlist fetched from the blob
+([docs/health.md](../docs/health.md)). So a new instance, or one rolled onto a new OS image, reports
+unhealthy until it can actually make decisions, and an image that can't is rolled back. After that,
+a blob or IdP outage leaves the instance ready on last-known-good. The health port is bound on
+loopback only, so no NSG or host-firewall rule is involved.
 
-The proxy also serves `/readyz` and `/livez` on `127.0.0.1:4751` (loopback only, so no NSG or
-host-firewall rule is involved). The demo does not probe it yet, so the `degraded` detail is only
-visible from inside the instance.
+The internal load balancer keeps its own **TCP 4750** probe. The proxy opens that port only once
+`/readyz` would return `200`, so it reads the same verdict without the `degraded` detail.
 
-Automatic instance repairs are **on**: the AVM scale-set module's default, with a 30-minute grace
-period. Since `deploy.sh` uploads the allowlist only after the scale set exists, instances report
-unhealthy between creation and that upload, and one that cannot load its first allowlist for longer
-than the grace period is replaced. Probing `/readyz` over HTTP and turning repairs off is a
-follow-up.
+Automatic instance repairs are **off**, explicitly (the AVM scale-set module turns them on by
+default). What makes an instance unready (the allowlist blob, the IdP's keys) is shared by every
+instance, so replacing one fixes nothing and the replacement starts without last-known-good. It
+also means the window between creating the scale set and `deploy.sh` uploading the allowlist, in
+which instances report unhealthy, doesn't trigger replacements.
 
 ## Redeploying an existing environment
 

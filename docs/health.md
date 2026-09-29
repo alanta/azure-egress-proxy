@@ -95,9 +95,9 @@ and a file that does not load stops the process. There is no reload loop, so `/l
 
 Port 4750 opens only once `/readyz` would return `200`. Before that there is no listener. That is
 still fail-closed (no listener, no egress), and it means anything that probes TCP 4750 gets the same
-answer as `/readyz`. Today that is the scale set's internal load balancer and its Application Health
-extension. A new instance that can't reach the blob therefore gets no traffic, instead of denying
-requests that other instances would have served.
+answer as `/readyz`. Today that is the scale set's internal load balancer, which can't reach the
+loopback health port. A new instance that can't reach the blob therefore gets no traffic, instead
+of denying requests that other instances would have served.
 
 The cost: during an outage at boot, a client that reaches a not-ready instance directly sees
 "connection refused" instead of a denial row in `EgressProxy_CL`. Through the load balancer, clients
@@ -116,10 +116,8 @@ The listener is always on, and it never shares a port with the proxy. The image 
 
 ### Virtual machine scale set (demo IaC and Marketplace image)
 
-The demo IaC ([infra/README.md](../infra/README.md)) still probes **TCP 4750** from both the
-Application Health extension and the load balancer. Since the port follows readiness, that already
-reads the readiness verdict, without the degraded detail. Moving the extension to `/readyz` and
-turning automatic repairs off is a follow-up, verified by a deployment. The target configuration:
+The demo IaC (`infra/modules/hub.bicep`, see [infra/README.md](../infra/README.md)) uses this
+configuration.
 
 The Application Health extension probes `/readyz` from inside the instance. It connects to
 `localhost`, so the loopback default works. This was verified on Azure Linux 3 ARM64: `localhost`
@@ -155,7 +153,9 @@ What that drives:
   load its configuration, keys or allowlist is therefore rolled back instead of rolled out. The
   `gracePeriod` stays well inside those 5 minutes.
 - **Automatic instance repairs are off**, explicitly. The AVM scale-set module turns them on by
-  default. With them on, a blob outage would make Azure replace healthy instances one at a time,
+  default; with the parameter false it still emits the policy object, as
+  `automaticRepairsPolicy: { enabled: false, gracePeriod: 'PT30M' }`, and the grace period is
+  inert. With them on, a blob outage would make Azure replace healthy instances one at a time,
   each replacement starting without last-known-good.
 - **The load balancer** keeps its own TCP probe on 4750, which follows readiness (above). It is a
   rule-level probe, not the scale set's `networkProfile.healthProbe`, so it doesn't conflict with
