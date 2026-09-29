@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +78,7 @@ func docWith(id, host string) allowlistDoc {
 // started with; each start after the first is a smokescreen restart.
 type supervised struct {
 	served chan allowlistDoc
+	health *health
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -86,10 +86,11 @@ type supervised struct {
 func supervise(t *testing.T, src *fakeSource) *supervised {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &supervised{served: make(chan allowlistDoc, 16), cancel: cancel, done: make(chan struct{})}
+	s := &supervised{served: make(chan allowlistDoc, 16), health: readyUpToAllowlist(),
+		cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(s.done)
-		superviseAllowlist(ctx, &allowlistWatch{src: src}, time.Millisecond,
+		superviseAllowlist(ctx, &allowlistWatch{src: src}, time.Millisecond, s.health,
 			func(doc allowlistDoc, quit <-chan interface{}) {
 				s.served <- doc
 				<-quit
@@ -180,22 +181,21 @@ func TestSuperviseRetriesFailedDownload(t *testing.T) {
 	sameACL(t, s.next(t), b)
 }
 
-// With no valid document yet, the proxy still starts deny-all, and applies the first valid
-// document once it appears.
-func TestSuperviseMalformedOnFirstStartIsDenyAll(t *testing.T) {
+// With no valid document yet, the proxy does not serve at all (the port stays closed) and is
+// not ready; the first valid document starts it. A malformed first document is not-ready
+// (allowlist), not degraded: there is no last-known-good to be degraded from.
+func TestSuperviseMalformedOnFirstStartDoesNotServe(t *testing.T) {
 	src := &fakeSource{}
 	src.set("v1", allowlistDoc{}, malformed)
 	s := supervise(t, src)
-	first := s.next(t)
-	if !reflect.DeepEqual(first, allowlistDoc{}) {
-		t.Fatalf("first start served %+v, want the empty (deny-all) document", first)
-	}
-	sameACL(t, first, allowlistDoc{})
+	waitFor(t, "the malformed document to be fetched", func() bool { return src.fetchCount("v1") > 0 })
 	s.noRestart(t)
+	wantReadyz(t, s.health, http.StatusServiceUnavailable, "not-ready", "allowlist")
 
 	a := docWith("mod-a", "a.example")
 	src.set("v2", a, nil)
 	sameACL(t, s.next(t), a)
+	wantReadyz(t, s.health, http.StatusOK, "ok", "ok")
 }
 
 // An unreachable blob holds last-known-good, as before.
@@ -347,7 +347,7 @@ func TestPollAuditsRejectedDocumentOncePerETag(t *testing.T) {
 	assertConfigRejected(t, got[1], "allowlist etag=v5 rejected, keeping last-known-good etag=v4 until the blob changes")
 }
 
-// Rejected at startup there is no last-known-good, so the row says the proxy stays deny-all.
+// Rejected at startup there is no last-known-good, so the row says the proxy port stays closed.
 // It is JSON even though the standard logger is still logrus text until smokescreen starts.
 func TestPollAuditsRejectedDocumentOnFirstStart(t *testing.T) {
 	rows := captureConfigAudit(t)
@@ -359,7 +359,7 @@ func TestPollAuditsRejectedDocumentOnFirstStart(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d CONFIG-REJECTED rows, want 1: %v", len(got), got)
 	}
-	assertConfigRejected(t, got[0], "allowlist etag=v1 rejected, staying FAIL-CLOSED (deny-all) until the blob changes")
+	assertConfigRejected(t, got[0], "allowlist etag=v1 rejected, staying FAIL-CLOSED (proxy port closed) until the blob changes")
 }
 
 // assertConfigRejected checks a row the way the DCR transform reads it: routed on the

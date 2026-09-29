@@ -27,6 +27,7 @@ decision.
 | Auth, tokens, JWKS, identity modes, the 407 handshake | [docs/identity.md](docs/identity.md) | `proxy/main.go`, `src/EgressProxy.Client/` |
 | Control-plane API, rulesets, RBAC verbs, onboarding | [docs/control-plane.md](docs/control-plane.md), [docs/allowlist.md](docs/allowlist.md) § Write path | `src/ControlPlane/`, `allowlist/rulesets.schema.json` |
 | The management console — surfaces, data clients, the design system | [src/Portal/README.md](src/Portal/README.md), [docs/control-plane.md](docs/control-plane.md) § The management console | `src/Portal/`, `src/Portal.Tests/` |
+| Health checks, `/readyz` and `/livez`, probes, when the proxy port opens | [docs/health.md](docs/health.md), [docs/allowlist.md](docs/allowlist.md) § Fail closed | `proxy/health.go`, `proxy/managed.go` |
 | Logging, DCR, KQL, the audit table | [docs/observability.md](docs/observability.md) | `infra/modules/` |
 | Bicep, networking, NSG, VMSS, deployment | [infra/README.md](infra/README.md), [docs/architecture.md](docs/architecture.md) | `infra/`, `scripts/` |
 | The .NET client library or sample app | [src/README.md](src/README.md), [docs/identity.md](docs/identity.md) | `src/EgressProxy.Client/`, `src/SampleApp/` |
@@ -66,8 +67,9 @@ Two documents are easy to miss and answer most "is this a bug?" questions:
 Do not weaken these without being asked to, explicitly. Each is a documented decision, not an
 accident — if one seems wrong, say so and stop rather than "fixing" it.
 
-**Fail closed.** No reachable config means a deny-all ACL, not an open proxy. Once the proxy
-has config it holds last-known-good through transient blob outages. An absent or empty
+**Fail closed.** No reachable config means no proxy listener at all (port 4750 closed,
+`/readyz` 503), never an open proxy. Once the proxy has config it holds last-known-good through
+transient blob outages, and stays ready while it does. An absent or empty
 `fallback` is deny-all.
 
 **Defaults never widen.** An omitted, empty, or unrecognised `action` normalises to
