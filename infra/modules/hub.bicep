@@ -105,6 +105,9 @@ var allowlistBlobName = 'allowlist.json'
 // never reads it — the proxy consumes the rendered allowlistBlobName above.
 var rulesetsBlobName = 'rulesets.json'
 var proxyPort = 4750
+// The proxy's health listener (/readyz, /livez). The binary binds it on loopback, so only the
+// Application Health extension inside the instance reaches it. See docs/health.md.
+var proxyHealthPort = 4751
 
 // Empty on purpose, and it is the one exemption in the deployment. The proxy is the component
 // whose whole job is to reach arbitrary allowed destinations on the Internet, so its policy is the
@@ -557,11 +560,18 @@ module proxyVmss 'br/public:avm/res/compute/virtual-machine-scale-set:0.11.1' = 
     }
     extensionHealthConfig: {
       enabled: true
-      protocol: 'tcp'
-      port: proxyPort
+      protocol: 'http'
+      port: proxyHealthPort
+      requestPath: '/readyz'
       intervalInSeconds: 5
       numberOfProbes: 2
+      gracePeriod: 120
+      autoUpgradeMinorVersion: true
     }
+    // Off explicitly (the AVM default is on). What makes an instance unready is shared by every
+    // instance (the allowlist blob, the IdP's keys), so replacing one fixes nothing, and the
+    // replacement starts without last-known-good. See docs/health.md.
+    automaticRepairsPolicyEnabled: false
   }
 }
 
