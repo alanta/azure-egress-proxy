@@ -16,7 +16,7 @@ not what is recorded.
 
 ## `EgressProxy_CL` rows
 
-`EventType` discriminates three events; columns that don't apply land null.
+`EventType` discriminates four events; columns that don't apply land null.
 
 **`CANONICAL-PROXY-DECISION`** — the allow/deny record:
 
@@ -35,6 +35,16 @@ not what is recorded.
 the `basic-*` identity modes. Carries `Host`, `SrcIp`, `ReqId`, `ProxyType`; `Role` is empty
 by definition, `Allow` is `false` without meaning a policy denial, and `DecisionReason` reads
 `"No proxy credentials presented; answered with a 407 Basic challenge"`. See below.
+
+**`CANONICAL-PROXY-CONFIG-REJECTED`** — a pushed allowlist document that did not parse and
+was not applied (managed mode). Not a request event: `Role`, `Host`, `ReqId` and `Allow` are
+empty. See [A rejected allowlist push](#a-rejected-allowlist-push).
+
+| Column | Meaning |
+|---|---|
+| `DecisionReason` | the rejected ETag and what stays in force: `allowlist etag="0x8DE…" rejected, keeping last-known-good etag="0x8DD…" until the blob changes`, or `… staying FAIL-CLOSED (deny-all) …` when no valid document has loaded yet |
+| `Error` | the decode error, e.g. `invalid allowlist document: bad JSON: unexpected end of JSON input` |
+| `Computer` | the instance that rejected it |
 
 ### The 407 handshake is its own event type
 
@@ -105,6 +115,31 @@ carries nothing the `AUTH-REQUIRED` row doesn't, so the proxy suppresses **that 
 a rejected token still produces it, with the validation error intact. Set
 `LOG_PREAUTH_DETAIL=1` on the proxy to keep every one of them (debugging the handshake).
 
+### A rejected allowlist push
+
+When a pushed `allowlist.json` does not decode, the proxy keeps serving last-known-good and
+does not download that version again until the blob changes
+([allowlist.md § Fail closed](allowlist.md)). Without an audit row, the only trace of that
+would be a free-text line in `Syslog`, and nobody watching `EgressProxy_CL` would see that
+the push never took effect.
+
+So each instance writes **one** `CANONICAL-PROXY-CONFIG-REJECTED` row per rejected ETag, not
+one per poll: a document that stays rejected adds nothing more. A later valid push clears
+it, and a later bad push produces a new row. Every instance runs the same code, so they all
+reject the same document: group by the ETag in `DecisionReason` to answer "was this push
+rejected?" rather than tracking which version each instance runs.
+
+The row uses only columns the transform already maps (`DecisionReason`, `Error`), so it
+needed no DCR or schema change. Both values come from Storage and the JSON decoder, never
+from a proxy client.
+
+Two things it does not cover:
+
+- **A failed download** is transient and retried every poll, so it is not a rejection and
+  has no row. It stays a warning in `Syslog`.
+- **An unreachable blob** is not a rejection either. While last-known-good is held it is
+  not logged at all; before the first valid document it is a warning in `Syslog`.
+
 ### `SrcIp` is not a workload identity
 
 On VNet-integrated Container Apps, egress is carried by the environment's infrastructure
@@ -158,6 +193,14 @@ EgressProxy_CL
 EgressProxy_CL
 | where EventType == "CANONICAL-PROXY-DECISION" and Allow == false
 | summarize count() by Role, Host
+
+// Rejected allowlist pushes: which versions were refused, why, and by how many instances
+EgressProxy_CL
+| where EventType == "CANONICAL-PROXY-CONFIG-REJECTED"
+| extend RejectedETag = extract(@"etag=(\S+) rejected", 1, DecisionReason)
+| summarize FirstSeen=min(TimeGenerated), Instances=dcount(Computer),
+            Reason=any(DecisionReason), Error=any(Error) by RejectedETag
+| order by FirstSeen desc
 
 // report-mode findings: what a new module actually needs allowed
 EgressProxy_CL

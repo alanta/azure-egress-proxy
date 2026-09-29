@@ -48,9 +48,12 @@ One atomic write = one consistent state, so there is no sentinel/marker object.
   has config, it holds **last-known-good** through transient blob outages, failed
   downloads, and **invalid documents**: a push that is not valid JSON, or has a field of the
   wrong type (say, `"modules": "all"`), is rejected. This is a decode check, not JSON
-  Schema validation: unknown fields are ignored. The proxy logs a warning naming the
-  rejected ETag and the parse error, keeps serving the previous allowlist without a restart
-  (open tunnels stay up), and does not download that version again until the blob changes.
+  Schema validation: unknown fields are ignored. The proxy writes one
+  `CANONICAL-PROXY-CONFIG-REJECTED` audit row naming the rejected ETag, the ETag kept in
+  force and the parse error, so the rejection shows in `EgressProxy_CL`
+  ([observability.md](observability.md#a-rejected-allowlist-push)). It keeps serving the
+  previous allowlist without a restart (open tunnels stay up), and does not download that
+  version again until the blob changes, so a version that stays rejected is audited once.
   A failed download is retried every poll. Last-known-good is never wider than what was
   approved, so this does not weaken fail-closed. A document that parses is applied as it
   is: `{}` or `{"modules": []}` is a legitimate deny-all push, not an error.
