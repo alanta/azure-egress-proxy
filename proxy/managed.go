@@ -319,8 +319,7 @@ func (w *allowlistWatch) poll(ctx context.Context) (doc allowlistDoc, ok bool) {
 			fetched = etag
 		}
 		w.rejected = fetched
-		logrus.Warnf("allowlist blob etag=%s rejected, %s until the blob changes: %v",
-			etagString(fetched), w.holding(), err)
+		logConfigRejected(fetched, w.holding(), err)
 		return allowlistDoc{}, false
 	case err != nil:
 		logrus.Warnf("allowlist blob etag=%s could not be downloaded, %s; retrying: %v",
@@ -335,6 +334,37 @@ func (w *allowlistWatch) poll(ctx context.Context) (doc allowlistDoc, ok bool) {
 	}
 	logrus.Infof("loaded allowlist blob: modules=%v fallback=%t etag=%s", ids, doc.Fallback != nil, etagString(fetched))
 	return doc, true
+}
+
+// canonicalProxyConfigRejected is this proxy's audit event for a pushed allowlist document
+// that did not parse and so was not applied. It keeps the CANONICAL-PROXY prefix the DCR
+// splits the syslog stream on, so the row lands in EgressProxy_CL with no ingestion or schema
+// change (docs/observability.md). poll emits it once per rejected ETag: that version is not
+// downloaded again until the blob changes, so a document that stays rejected adds no rows.
+const canonicalProxyConfigRejected = "CANONICAL-PROXY-CONFIG-REJECTED"
+
+// configAuditLog writes the CONFIG-REJECTED row. It is its own JSON logger because the row
+// must parse at the DCR whenever it is written, and the standard logger only switches to JSON
+// when smokescreen's NewConfig runs, which is after the first poll. A document rejected at
+// startup would otherwise ship as logrus text and land as an empty row. The format matches
+// smokescreen's own.
+var configAuditLog = &logrus.Logger{
+	Out:       os.Stderr,
+	Formatter: &logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano},
+	Hooks:     make(logrus.LevelHooks),
+	Level:     logrus.InfoLevel,
+}
+
+// logConfigRejected emits the CONFIG-REJECTED row using only fields the DCR transform already
+// maps: decision_reason (DecisionReason) names the rejected ETag and what stays in force, and
+// error (Error) is the decode error. Both come from Storage and the decoder, never from a
+// proxy client.
+func logConfigRejected(rejected *azcore.ETag, holding string, err error) {
+	configAuditLog.WithFields(logrus.Fields{
+		"decision_reason": fmt.Sprintf("allowlist etag=%s rejected, %s until the blob changes",
+			etagString(rejected), holding),
+		"error": err.Error(),
+	}).Warn(canonicalProxyConfigRejected)
 }
 
 // holding describes what stays in force while a new document cannot be applied.

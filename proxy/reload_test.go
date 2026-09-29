@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -256,5 +260,122 @@ func TestFetchAllowlistClassifiesInvalidDocument(t *testing.T) {
 				t.Errorf("etag = %v, want the served ETag", etag)
 			}
 		})
+	}
+}
+
+// captureConfigAudit redirects the CONFIG-REJECTED logger for one test and returns a func
+// that decodes every row written so far, the way the DCR transform parses them.
+func captureConfigAudit(t *testing.T) func() []map[string]any {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	configAuditLog.SetOutput(buf)
+	t.Cleanup(func() { configAuditLog.SetOutput(os.Stderr) })
+	return func() []map[string]any {
+		var rows []map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+			if line == "" {
+				continue
+			}
+			var row map[string]any
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Fatalf("audit line is not JSON, so the DCR could not parse it: %q: %v", line, err)
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	}
+}
+
+// pollN polls w n times and reports how many polls yielded a document to apply.
+func pollN(w *allowlistWatch, n int) (applied int) {
+	for range n {
+		if _, ok := w.poll(context.Background()); ok {
+			applied++
+		}
+	}
+	return applied
+}
+
+// A rejected push is audited as one CANONICAL-PROXY-CONFIG-REJECTED row per rejected ETag,
+// carrying both ETags and the decode error in fields the DCR already maps. It is not repeated
+// while the same version stays in the blob; a valid push clears it, and a later bad push is
+// audited again (issue #90).
+func TestPollAuditsRejectedDocumentOncePerETag(t *testing.T) {
+	rows := captureConfigAudit(t)
+	src := &fakeSource{}
+	w := &allowlistWatch{src: src}
+
+	src.set("v1", docWith("mod-a", "a.example"), nil)
+	if pollN(w, 3) != 1 {
+		t.Fatal("valid document v1 was not applied exactly once")
+	}
+	if got := rows(); len(got) != 0 {
+		t.Fatalf("valid document audited as rejected: %v", got)
+	}
+
+	src.set("v2", allowlistDoc{}, malformed)
+	if pollN(w, 5) != 0 {
+		t.Fatal("malformed document v2 was applied")
+	}
+	got := rows()
+	if len(got) != 1 {
+		t.Fatalf("got %d CONFIG-REJECTED rows over 5 polls of one bad version, want 1: %v", len(got), got)
+	}
+	assertConfigRejected(t, got[0], "allowlist etag=v2 rejected, keeping last-known-good etag=v1 until the blob changes")
+
+	// A failed download is retried, not rejected, so it is not audited as a rejection.
+	src.set("v3", allowlistDoc{}, errors.New("connection reset"))
+	pollN(w, 3)
+	if n := len(rows()); n != 1 {
+		t.Fatalf("a failed download added CONFIG-REJECTED rows: %d, want still 1", n)
+	}
+
+	src.set("v4", docWith("mod-b", "b.example"), nil)
+	if pollN(w, 3) != 1 {
+		t.Fatal("valid document v4 was not applied exactly once")
+	}
+	if w.rejected != nil {
+		t.Errorf("rejected = %q after a valid push, want it cleared", etagString(w.rejected))
+	}
+
+	src.set("v5", allowlistDoc{}, malformed)
+	pollN(w, 3)
+	got = rows()
+	if len(got) != 2 {
+		t.Fatalf("got %d CONFIG-REJECTED rows, want a second one for the new bad version v5: %v", len(got), got)
+	}
+	assertConfigRejected(t, got[1], "allowlist etag=v5 rejected, keeping last-known-good etag=v4 until the blob changes")
+}
+
+// Rejected at startup there is no last-known-good, so the row says the proxy stays deny-all.
+// It is JSON even though the standard logger is still logrus text until smokescreen starts.
+func TestPollAuditsRejectedDocumentOnFirstStart(t *testing.T) {
+	rows := captureConfigAudit(t)
+	src := &fakeSource{}
+	src.set("v1", allowlistDoc{}, malformed)
+	pollN(&allowlistWatch{src: src}, 3)
+
+	got := rows()
+	if len(got) != 1 {
+		t.Fatalf("got %d CONFIG-REJECTED rows, want 1: %v", len(got), got)
+	}
+	assertConfigRejected(t, got[0], "allowlist etag=v1 rejected, staying FAIL-CLOSED (deny-all) until the blob changes")
+}
+
+// assertConfigRejected checks a row the way the DCR transform reads it: routed on the
+// CANONICAL-PROXY prefix of msg, DecisionReason and Error taken from their mapped fields.
+func assertConfigRejected(t *testing.T, row map[string]any, wantReason string) {
+	t.Helper()
+	if msg, _ := row["msg"].(string); msg != canonicalProxyConfigRejected || !strings.HasPrefix(msg, "CANONICAL-PROXY-") {
+		t.Errorf("msg = %v, want %s", row["msg"], canonicalProxyConfigRejected)
+	}
+	if row["level"] != "warning" {
+		t.Errorf("level = %v, want warning", row["level"])
+	}
+	if row["decision_reason"] != wantReason {
+		t.Errorf("decision_reason = %q\nwant              %q", row["decision_reason"], wantReason)
+	}
+	if row["error"] != malformed.Error() {
+		t.Errorf("error = %q, want the decode error %q", row["error"], malformed.Error())
 	}
 }
