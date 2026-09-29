@@ -124,6 +124,7 @@ module containerRegistry 'br/public:avm/res/container-registry/registry:0.13.1' 
     location: location
     acrSku: 'Basic'
     acrAdminUserEnabled: false
+    networkRuleSetDefaultAction: 'Allow'
     publicNetworkAccess: 'Enabled'
   }
   dependsOn: [
