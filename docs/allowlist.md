@@ -116,7 +116,7 @@ change. Setup, RBAC, and `curl` examples: [control-plane.md](control-plane.md).
 | `OUTPUT_FILE` | Rendered ACL path (default `/render/acl.yaml`) |
 | `SMOKESCREEN_ID_MODE` | **Required**, no default. Identity mode: `basic-jwt` (recommended), `basic-name`, `jwt`, `netid` — see [identity.md](identity.md). The token modes also require `JWKS_URL` (https), `EXPECT_ISS` and `EXPECT_AUD`; the proxy checks all of them at startup and refuses to start if any is missing or invalid |
 | `JWKS_ALLOW_INSECURE_HTTP` | `1` lets `JWKS_URL` use plain `http`. **Local development only** (the Aspire mock IdP); off unless set — see [identity.md](identity.md#startup-check) |
-| `HEALTH_ADDR` | Address of the `/readyz` and `/livez` listener (default `127.0.0.1:4751`; `:4751` in a container) — see [health.md](health.md) |
+| `HEALTH_ADDR` | Address of the `/readyz` and `/livez` listener (binary default `127.0.0.1:4751`; the container image sets `:4751`) — see [health.md](health.md) |
 | `LOG_PREAUTH_DETAIL` | `1` keeps the per-handshake `Unable to get role for request` diagnostic line, suppressed by default — see [observability.md](observability.md) |
 
 Setting either `ALLOWLIST_BLOB_*` variable turns on managed mode (the watch/render/reload

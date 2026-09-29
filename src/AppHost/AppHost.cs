@@ -43,8 +43,8 @@ var mockIdp = builder.AddDockerfile("mock-idp", "../../mock-idp")
 
 var proxy = builder.AddDockerfile("proxy", "../../proxy")
     .WithEndpoint(name: "proxy", targetPort: 4750, port: 14750, isProxied: false)
-    // The health listener (/readyz, /livez). It binds loopback unless told otherwise, which a
-    // published container port cannot reach; on a VM it stays on loopback (docs/health.md).
+    // The health listener (/readyz, /livez). The image already binds it on :4751 (the bare binary
+    // on a VM binds loopback); set explicitly because the health check below depends on it.
     .WithHttpEndpoint(name: "health", targetPort: 4751, port: 14751, isProxied: false)
     .WithEnvironment("HEALTH_ADDR", ":4751")
     .WithArgs("--egress-acl-file", "/render/acl.yaml")

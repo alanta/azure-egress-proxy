@@ -107,9 +107,10 @@ don't reach it at all. See [allowlist.md § Fail closed](allowlist.md).
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `HEALTH_ADDR` | `127.0.0.1:4751` | Where the health listener binds. Loopback by default, so nothing outside the host can reach it. Set `:4751` in a container so the kubelet can probe the pod IP. An address that cannot be bound stops the proxy at startup |
+| `HEALTH_ADDR` | binary: `127.0.0.1:4751`; container image: `:4751` | Where the health listener binds. The bare binary (the VM) binds loopback, so nothing outside the host can reach it. The container image sets `HEALTH_ADDR=:4751`, so a kubelet, Container Apps or Docker health probe can reach the pod or container IP without extra configuration. An address that cannot be bound stops the proxy at startup |
 
-The listener is always on, and it never shares a port with the proxy.
+The listener is always on, and it never shares a port with the proxy. The image declares
+`EXPOSE 4750 4751` (proxy and health).
 
 ## Platforms
 
@@ -171,7 +172,8 @@ az vmss run-command invoke -g <rg> -n <vmss> --instance-id <id> --command-id Run
 
 ### Kubernetes and Azure Container Apps
 
-Set `HEALTH_ADDR=:4751`, and map the probes one to one:
+The container image already binds the health listener on `:4751`, so there is nothing to set.
+Map the probes one to one:
 
 ```yaml
 startupProbe:
@@ -197,8 +199,9 @@ livenessProbe:
 
 ### Local (Aspire)
 
-The AppHost sets `HEALTH_ADDR=:4751` on the proxy container, publishes it on `localhost:14751`, and
-registers `/readyz` as its HTTP health check. Dependent resources (the sample app) wait for a proxy
+The AppHost publishes the proxy container's health port on `localhost:14751` and registers
+`/readyz` as its HTTP health check. It also sets `HEALTH_ADDR=:4751`, which is the image default
+anyway, to make the dependency explicit. Dependent resources (the sample app) wait for a proxy
 that has actually loaded its allowlist.
 
 ## Logging and the audit trail

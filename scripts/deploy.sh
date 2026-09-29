@@ -238,6 +238,15 @@ rm -f /tmp/egress-proxy.new
 systemctl restart egress-proxy
 sleep 2
 systemctl is-active egress-proxy
+# Port 4750 opens only once the proxy is ready (keys and first allowlist loaded), so wait on
+# /readyz instead of a fixed sleep. See docs/health.md.
+for _ in \$(seq 1 60); do
+  ready=\$(curl -s -m 2 -w ' %{http_code}' http://127.0.0.1:4751/readyz || true)
+  case \"\$ready\" in *' 200') break ;; esac
+  sleep 1
+done
+echo \"readyz: \$ready\"
+case \"\$ready\" in *' 200') ;; *) echo 'NOT READY'; exit 1 ;; esac
 ss -ltn | grep -q ':4750' && echo 'LISTENING on 4750' || { echo 'NOT LISTENING'; exit 1; }"
   for id in $ids; do
     info "Refreshing binary on '$vmss' instance $id"
