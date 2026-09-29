@@ -293,7 +293,7 @@ func (blobSource) Fetch(ctx context.Context) (allowlistDoc, *azcore.ETag, error)
 // a bad push is logged once and skipped until the blob changes again.
 type allowlistWatch struct {
 	src      allowlistSource
-	applied  *azcore.ETag // ETag of the document in force; nil while serving fail-closed deny-all
+	applied  *azcore.ETag // ETag of the document in force; nil until the first one (proxy port closed)
 	rejected *azcore.ETag // ETag of the last document that did not parse
 }
 
@@ -370,7 +370,7 @@ func logConfigRejected(rejected *azcore.ETag, holding string, err error) {
 // holding describes what stays in force while a new document cannot be applied.
 func (w *allowlistWatch) holding() string {
 	if w.applied == nil {
-		return "staying FAIL-CLOSED (deny-all)"
+		return "staying FAIL-CLOSED (proxy port closed)"
 	}
 	return "keeping last-known-good etag=" + etagString(w.applied)
 }
@@ -385,8 +385,8 @@ func etagString(e *azcore.ETag) string {
 }
 
 // runManaged renders the ACL from the allowlist blob and supervises smokescreen, restarting
-// it in-process whenever a new valid document is published. On startup with no valid
-// document it renders a deny-all ACL (fail closed) and keeps retrying.
+// it in-process whenever a new valid document is published. Until the first valid document
+// there is no proxy listener at all (fail closed), and /readyz says why.
 func runManaged() {
 	outputFile := envOr("OUTPUT_FILE", "/render/acl.yaml")
 	poll := 10
@@ -397,10 +397,13 @@ func runManaged() {
 	// poll and before anything listens (see config.go).
 	requireIdentityConfig(logrus.StandardLogger(), os.Getenv, true)
 	mode := os.Getenv("SMOKESCREEN_ID_MODE")
+	// The health listener answers 503 (keys) while the token modes load the JWKS below.
+	h := startHealth()
 	roleFor := newManagedRoleFunc(mode)
+	h.keysLoaded()
 
 	w := &allowlistWatch{src: blobSource{}}
-	superviseAllowlist(context.Background(), w, time.Duration(poll)*time.Second,
+	superviseAllowlist(context.Background(), w, time.Duration(poll)*time.Second, h,
 		func(doc allowlistDoc, quit <-chan interface{}) {
 			if err := writeFileAtomic(outputFile, renderSmokescreenACL(mode, doc.Modules, doc.Fallback)); err != nil {
 				logrus.Fatalf("write %s: %v", outputFile, err)
@@ -424,19 +427,37 @@ const allowlistPollTimeout = 15 * time.Second
 
 // superviseAllowlist serves the allowlist (serve renders it and runs smokescreen until quit
 // closes) and restarts serve only when the watcher yields a new valid document, so a bad
-// push never drops open tunnels. It starts deny-all when no valid document can be loaded,
-// and returns when ctx ends.
-func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Duration,
+// push never drops open tunnels. serve is not called at all until the first valid document:
+// the proxy port stays closed and /readyz reports the allowlist as missing. It returns when
+// ctx ends, or once serve has returned after shutdown started (smokescreen drains on SIGTERM
+// itself; restarting it then would keep a stopping process serving).
+func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Duration, h *health,
 	serve func(doc allowlistDoc, quit <-chan interface{})) {
-	pctx, cancel := context.WithTimeout(ctx, allowlistPollTimeout)
-	doc, _ := w.poll(pctx) // no valid document: the zero doc renders deny-all
-	cancel()
+	h.watchLoop(every)
+	doc, ok := pollAllowlist(ctx, w, h)
+	for !ok {
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.stopping:
+			return
+		case <-time.After(every):
+		}
+		doc, ok = pollAllowlist(ctx, w, h)
+	}
 
 	for {
+		if !h.beginServing() {
+			return
+		}
+		h.beat()
 		quit := make(chan interface{})
 		next := make(chan allowlistDoc, 1)
 		stop := make(chan struct{})
 		done := make(chan struct{})
+		// Polls run under wctx, so a poll still in flight when serve returns (a shutdown
+		// during a blob outage waits up to allowlistPollTimeout otherwise) is abandoned.
+		wctx, wcancel := context.WithCancel(ctx)
 		go func() {
 			defer close(done)
 			t := time.NewTicker(every)
@@ -449,10 +470,7 @@ func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Durat
 					close(quit)
 					return
 				case <-t.C:
-					pctx, cancel := context.WithTimeout(ctx, allowlistPollTimeout)
-					d, ok := w.poll(pctx)
-					cancel()
-					if ok {
+					if d, ok := pollAllowlist(wctx, w, h); ok {
 						next <- d
 						close(quit)
 						return
@@ -462,9 +480,11 @@ func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Durat
 		}()
 
 		serve(doc, quit)
+		h.endServing()
 		close(stop)
+		wcancel()
 		<-done // the watcher owns w while it runs; wait before the next one starts
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || h.isShuttingDown() {
 			return
 		}
 		select {
@@ -474,4 +494,15 @@ func superviseAllowlist(ctx context.Context, w *allowlistWatch, every time.Durat
 			// serve returned on its own; restart it on the same document
 		}
 	}
+}
+
+// pollAllowlist runs one bounded poll and reports the watcher's state to the health listener.
+// Only the goroutine that owns w may call it.
+func pollAllowlist(ctx context.Context, w *allowlistWatch, h *health) (allowlistDoc, bool) {
+	pctx, cancel := context.WithTimeout(ctx, allowlistPollTimeout)
+	defer cancel()
+	doc, ok := w.poll(pctx)
+	h.allowlistState(w.applied != nil, w.rejected != nil)
+	h.beat()
+	return doc, ok
 }

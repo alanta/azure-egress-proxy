@@ -500,12 +500,21 @@ func main() {
 		// listens (see config.go).
 		requireIdentityConfig(logrus.StandardLogger(), os.Getenv, false)
 		mode := os.Getenv("SMOKESCREEN_ID_MODE")
+		// The health listener answers 503 (keys) while the token modes load the JWKS below.
+		h := startHealth()
+		// Standalone has no blob: its allowlist is the ACL file, which NewConfiguration has
+		// already loaded, so configuration and keys are all readiness needs here.
+		h.allowlistState(true, false)
 		conf.RoleFromRequest = roleFromRequest(mode)
+		h.keysLoaded()
 		// Spells out why a request was rejected, and in the Basic identity models emits the
 		// challenge on credential-less CONNECTs so clients attach their proxy credentials.
 		conf.RejectResponseHandlerWithCtx = newRejectHandler(mode)
 		applyJSONLogging(conf)
-		smokescreen.StartWithConfig(conf, nil)
+		if h.beginServing() {
+			smokescreen.StartWithConfig(conf, nil)
+			h.endServing()
+		}
 	}
 	// else: --help/--version handled inside NewConfiguration
 }

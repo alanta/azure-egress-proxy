@@ -122,8 +122,9 @@ These all showed up during live validation — they're normal:
   after ~30 s), or by the proxy at its 300 s idle timeout — so reuse fails immediately instead
   of black-holing, and is retryable. Clients should retire idle pooled connections sooner; see
   [docs/production-hardening.md § Idle timeouts](docs/production-hardening.md#idle-timeouts--the-stale-tunnel-contract).
-- **The proxy starts deny-all until the allowlist blob is seeded** (fail-closed);
-  `deploy.sh` seeds it as its last step.
+- **Port 4750 refuses connections until the allowlist blob is seeded** (fail-closed: no
+  listener until the first allowlist loads, and `/readyz` on the health port says
+  `allowlist`); `deploy.sh` seeds it as its last step. See [docs/health.md](docs/health.md).
 - **The first request after ~15 idle minutes is slow (or one 504).** The sample app
   scales to zero, so the first request pays a cold start. Retry.
 - **Telemetry exporters need a `NO_PROXY` carve-out.** Anything that honours

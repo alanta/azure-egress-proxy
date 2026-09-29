@@ -43,6 +43,10 @@ var mockIdp = builder.AddDockerfile("mock-idp", "../../mock-idp")
 
 var proxy = builder.AddDockerfile("proxy", "../../proxy")
     .WithEndpoint(name: "proxy", targetPort: 4750, port: 14750, isProxied: false)
+    // The health listener (/readyz, /livez). The image already binds it on :4751 (the bare binary
+    // on a VM binds loopback); set explicitly because the health check below depends on it.
+    .WithHttpEndpoint(name: "health", targetPort: 4751, port: 14751, isProxied: false)
+    .WithEnvironment("HEALTH_ADDR", ":4751")
     .WithArgs("--egress-acl-file", "/render/acl.yaml")
     .WithEnvironment("SMOKESCREEN_ID_MODE", "basic-jwt")
     .WithEnvironment("JWKS_URL", "http://mock-idp:8080/jwks")
@@ -55,6 +59,9 @@ var proxy = builder.AddDockerfile("proxy", "../../proxy")
     .WithEnvironment("ALLOWLIST_CONTAINER", allowlistContainer)
     .WithEnvironment("ALLOWLIST_BLOB", allowlistBlob)
     .WithEnvironment("POLL_SECONDS", "5")
+    // Healthy only once the proxy has keys and its first allowlist, and the proxy port is open,
+    // so the sample app's WaitFor(proxy) waits for a proxy that can actually decide.
+    .WithHttpHealthCheck("/readyz", endpointName: "health")
     .WaitFor(mockIdp)
     .WaitFor(azurite)
     .WaitFor(allowlistSeeder);

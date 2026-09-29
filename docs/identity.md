@@ -85,7 +85,8 @@ template does, and none should.
 In `jwt` and `basic-jwt` mode the proxy **does not start serving until it holds signing
 keys**. At startup it fetches `JWKS_URL` up to 30 times, a second apart. An unreachable
 URL, a non-200 response, bad JSON, or a key set with no usable keys each count as a
-failure. If every attempt fails, the process exits with the last error. Without this, the
+failure. Meanwhile the proxy port stays closed and `/readyz` answers `503` (`keys`); see
+[health.md](health.md). If every attempt fails, the process exits with the last error. Without this, the
 proxy would reject every token while its open port still passed the health probe. Once
 keys are loaded, the proxy refreshes them hourly, and at most every 5 minutes when a token
 carries an unknown key ID. A failed refresh keeps the cached keys. In managed mode an

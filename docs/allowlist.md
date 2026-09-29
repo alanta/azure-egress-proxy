@@ -43,9 +43,12 @@ One atomic write = one consistent state, so there is no sentinel/marker object.
   present no/invalid token). It widens the default block from pure deny-all to a curated,
   platform-owned baseline. The default block is always `enforce`. Keep it minimal and
   watch its usage in the logs as a migration backlog.
-- **Fail closed** — if the proxy has no valid document at first start (blob unreachable,
-  or a document that does not parse), it renders a deny-all ACL and keeps retrying. Once it
-  has config, it holds **last-known-good** through transient blob outages, failed
+- **Fail closed** — until the proxy has loaded a valid document for the first time (blob
+  unreachable, or a document that does not parse), it does not open the proxy port at all:
+  no listener, no egress. It keeps retrying every poll, and `/readyz` answers `503`
+  (`allowlist`) meanwhile, so a load balancer or orchestrator routes around the instance
+  instead of sending it requests to deny — see [health.md](health.md#the-proxy-port-follows-readiness).
+  Once it has config, it holds **last-known-good** through transient blob outages, failed
   downloads, and **invalid documents**: a push that is not valid JSON, or has a field of the
   wrong type (say, `"modules": "all"`), is rejected. This is a decode check, not JSON
   Schema validation: unknown fields are ignored. The proxy writes one
@@ -54,7 +57,8 @@ One atomic write = one consistent state, so there is no sentinel/marker object.
   ([observability.md](observability.md#a-rejected-allowlist-push)). It keeps serving the
   previous allowlist without a restart (open tunnels stay up), and does not download that
   version again until the blob changes, so a version that stays rejected is audited once.
-  A failed download is retried every poll. Last-known-good is never wider than what was
+  `/readyz` stays `200` but reports `degraded` (`rejected`) until a valid document is
+  applied. A failed download is retried every poll. Last-known-good is never wider than what was
   approved, so this does not weaken fail-closed. A document that parses is applied as it
   is: `{}` or `{"modules": []}` is a legitimate deny-all push, not an error.
   Fail-closed covers the **allowlist**, not the identity configuration: a missing or invalid
@@ -112,6 +116,7 @@ change. Setup, RBAC, and `curl` examples: [control-plane.md](control-plane.md).
 | `OUTPUT_FILE` | Rendered ACL path (default `/render/acl.yaml`) |
 | `SMOKESCREEN_ID_MODE` | **Required**, no default. Identity mode: `basic-jwt` (recommended), `basic-name`, `jwt`, `netid` — see [identity.md](identity.md). The token modes also require `JWKS_URL` (https), `EXPECT_ISS` and `EXPECT_AUD`; the proxy checks all of them at startup and refuses to start if any is missing or invalid |
 | `JWKS_ALLOW_INSECURE_HTTP` | `1` lets `JWKS_URL` use plain `http`. **Local development only** (the Aspire mock IdP); off unless set — see [identity.md](identity.md#startup-check) |
+| `HEALTH_ADDR` | Address of the `/readyz` and `/livez` listener (binary default `127.0.0.1:4751`; the container image sets `:4751`) — see [health.md](health.md) |
 | `LOG_PREAUTH_DETAIL` | `1` keeps the per-handshake `Unable to get role for request` diagnostic line, suppressed by default — see [observability.md](observability.md) |
 
 Setting either `ALLOWLIST_BLOB_*` variable turns on managed mode (the watch/render/reload

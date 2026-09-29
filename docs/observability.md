@@ -42,7 +42,7 @@ empty. See [A rejected allowlist push](#a-rejected-allowlist-push).
 
 | Column | Meaning |
 |---|---|
-| `DecisionReason` | the rejected ETag and what stays in force: `allowlist etag="0x8DE…" rejected, keeping last-known-good etag="0x8DD…" until the blob changes`, or `… staying FAIL-CLOSED (deny-all) …` when no valid document has loaded yet |
+| `DecisionReason` | the rejected ETag and what stays in force: `allowlist etag="0x8DE…" rejected, keeping last-known-good etag="0x8DD…" until the blob changes`, or `… staying FAIL-CLOSED (proxy port closed) …` when no valid document has loaded yet (no listener; see [health.md](health.md)) |
 | `Error` | the decode error, e.g. `invalid allowlist document: bad JSON: unexpected end of JSON input` |
 | `Computer` | the instance that rejected it |
 
@@ -129,6 +129,10 @@ it, and a later bad push produces a new row. Every instance runs the same code, 
 reject the same document: group by the ETag in `DecisionReason` to answer "was this push
 rejected?" rather than tracking which version each instance runs.
 
+On the instance itself, `/readyz` stays `200` but reports `degraded` (`rejected`) until a
+valid document is applied ([health.md](health.md)); the row is the fleet-wide view of the same
+state.
+
 The row uses only columns the transform already maps (`DecisionReason`, `Error`), so it
 needed no DCR or schema change. Both values come from Storage and the JSON decoder, never
 from a proxy client.
@@ -146,6 +150,33 @@ On VNet-integrated Container Apps, egress is carried by the environment's infras
 nodes — a single replica's connections arrive from **multiple, rotating subnet IPs**
 (observed live: one replica, two interleaved node IPs). This is why the allowlist keys on
 the JWT `appid` (`Role`), never on the source address.
+
+## Health transitions
+
+Health probes (`/readyz`, `/livez`, see [health.md](health.md)) never reach Smokescreen, so they
+add nothing to `EgressProxy_CL`, and individual probes are not logged. What is logged is each
+**change** of the readiness verdict, once, with the reason as fields:
+
+```text
+level=info msg="readiness changed: not-ready (keys)" ready=false reason=keys status=not-ready
+level=info msg="readiness changed: not-ready (allowlist)" ready=false reason=allowlist status=not-ready
+level=info msg="readiness changed: ok (ok)" ready=true reason=ok status=ok
+{"level":"info","msg":"readiness changed: degraded (rejected)","ready":true,"reason":"rejected","status":"degraded",...}
+{"level":"info","msg":"readiness changed: not-ready (shutdown)","ready":false,"reason":"shutdown","status":"not-ready",...}
+```
+
+In managed mode the lines before the first allowlist are logrus text and the ones after it JSON,
+because Smokescreen switches the formatter when it first starts. A stuck reload loop logs `liveness: the allowlist reload loop has not
+finished a poll ...` at `error` when `/livez` first sees it. All of these come from process
+`egress-proxy`, so the diagnostic transform ships them to `Syslog`:
+
+```kql
+// Readiness history per instance
+Syslog
+| where ProcessName == "egress-proxy" and SyslogMessage has "readiness changed"
+| project TimeGenerated, Computer, SyslogMessage
+| order by TimeGenerated desc
+```
 
 ## Useful queries
 

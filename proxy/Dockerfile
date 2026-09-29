@@ -26,4 +26,10 @@ RUN mkdir -p /render
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /egress-proxy /usr/bin/egress-proxy
 COPY --from=build --chown=65532:65532 /render /render
+# The health listener (/readyz, /livez; docs/health.md) binds loopback by default, which is right
+# for the VM (the scale set's health extension probes from inside it) but unreachable for a
+# kubelet, Container Apps or Docker health probe. In the image it binds all interfaces.
+ENV HEALTH_ADDR=:4751
+# 4750: the CONNECT proxy (opens only once ready). 4751: health. Metadata only.
+EXPOSE 4750 4751
 ENTRYPOINT ["egress-proxy"]
