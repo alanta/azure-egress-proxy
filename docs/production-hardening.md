@@ -114,6 +114,20 @@ and clients must treat it as retryable. The reset setting matters only if a flow
 reach the LB timer — keepalives disabled somewhere in the path, a client that suppresses them,
 or a raised proxy `ReadTimeout`. That is exactly when you want it already on.
 
+The 300 s figure is guarded by a test (`TestHTTPReadIdleDefaultsStay300s` in
+[contract_test.go](../proxy/contract_test.go)): with no `idle_timeout` configured, Smokescreen
+v0.1.0 still leaves `IdleTimeout` unset and `ReadTimeout` at 300 s, so a dependency bump that
+moves either fails CI instead of silently changing the contract below.
+
+**Outbound connect timeout: 10 s by default.** Separately from the idle behaviour, the proxy
+gives up on a destination that does not complete the TCP connect within 10 seconds, so a
+destination that is slow to accept connections fails with a connect error rather than hanging
+until the client's own timeout. This is Smokescreen's default since v0.1.0 (earlier pins had no
+bound); the proxy does not override it. Set `connect_timeout` in the Smokescreen config file
+(or pass `--timeout`) to change it per deployment; an explicit `0` disables the bound. The
+default and the override are guarded by `TestConnectTimeoutDefaultAndOverride` in
+[contract_test.go](../proxy/contract_test.go).
+
 **The rule every client must follow:** close idle pooled tunnels *before* the platform does.
 
 - The shipped .NET client pins `PooledConnectionIdleTimeout` to **1 min** and rejects any
