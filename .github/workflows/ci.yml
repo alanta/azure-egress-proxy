@@ -27,6 +27,8 @@ jobs:
       infra: ${{ steps.filter.outputs.infra }}
       scripts: ${{ steps.filter.outputs.scripts }}
       workflow: ${{ steps.filter.outputs.workflow }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+      mock_idp: ${{ steps.filter.outputs.mock_idp }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -48,8 +50,14 @@ jobs:
               - 'infra/**'
             scripts:
               - 'scripts/**/*.sh'
+            # A change to this file can change any job, so it runs them all.
             workflow:
               - '.github/workflows/ci.yml'
+            # Any workflow, including release/deploy/allowlist: linted, never run here.
+            workflows:
+              - '.github/workflows/**'
+            mock_idp:
+              - 'mock-idp/**'
 
   proxy:
     name: Build proxy image
@@ -60,13 +68,161 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Build proxy Docker image
+      # The same builder setup, action pins and platforms as release.yml, so a change that
+      # would break the release image build fails here first, and a bump of these actions is
+      # exercised before it reaches a release.
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build proxy image (amd64 and arm64, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: proxy
+          file: proxy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+  app-images:
+    name: Build ${{ matrix.image }} image
+    runs-on: ubuntu-latest
+    needs: changes
+    # release.yml publishes these three images; until this job, CI never built them, so a
+    # base-image bump or a Dockerfile change could pass CI and fail the release.
+    if: needs.changes.outputs.dotnet == 'true' || needs.changes.outputs.workflow == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: sample-app
+            dockerfile: src/SampleApp/Dockerfile
+          - image: control-plane
+            dockerfile: src/ControlPlane/Dockerfile
+          - image: portal
+            dockerfile: src/Portal/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Same setup as the proxy job above: mirrors release.yml.
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build image (amd64 and arm64, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+  mock-idp:
+    name: Build and smoke-test mock IdP image
+    runs-on: ubuntu-latest
+    needs: changes
+    # Local-dev only and never released, but its base image and the inline PyJWT pin still
+    # move, and nothing else would notice them breaking.
+    if: needs.changes.outputs.mock_idp == 'true' || needs.changes.outputs.workflow == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build and start the mock IdP
         run: |
-          if [ ! -d proxy ]; then
-            echo "::notice::proxy/ not present yet; skipping."
-            exit 0
-          fi
-          docker build proxy/
+          docker build -t mock-idp:ci mock-idp/
+          docker run -d --name mock-idp -p 127.0.0.1:8080:8080 mock-idp:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/jwks >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "::error::The mock IdP did not serve /jwks within 30 seconds."
+          exit 1
+      - name: Issue a token and verify it against the JWKS
+        # Signing and verification both run inside the image, so this exercises the
+        # Python base image together with PyJWT[crypto], the way the local stack uses them.
+        run: |
+          token=$(curl -fsS 'http://127.0.0.1:8080/token?appid=ci-smoke')
+          docker exec -i -e TOKEN="$token" mock-idp python - <<'PY'
+          import json, os, urllib.request
+          import jwt
+          from jwt.algorithms import RSAAlgorithm
+          keys = json.load(urllib.request.urlopen("http://127.0.0.1:8080/jwks"))["keys"]
+          key = RSAAlgorithm.from_jwk(json.dumps(keys[0]))
+          claims = jwt.decode(os.environ["TOKEN"], key, algorithms=["RS256"], audience="egress-proxy")
+          assert claims["appid"] == "ci-smoke", claims
+          print("token verified for appid", claims["appid"])
+          PY
+      - name: Show mock IdP logs
+        if: failure()
+        run: docker logs mock-idp || true
+
+  go-toolchain:
+    name: Check Go toolchain consistency
+    runs-on: ubuntu-latest
+    needs: changes
+    # The Go line is declared in go.mod, the proxy Dockerfile and every setup-go step.
+    # Dependabot bumps the Dockerfile tag on its own (and cannot bump go.mod at all), so
+    # a PR could ship the container on one Go line while govulncheck and the release
+    # binaries use another. This fails that PR instead of letting the lines drift apart.
+    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflows == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compare Go versions across go.mod, Dockerfiles and workflows
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys
+          version = r"(\d+)\.(\d+)(?:\.\d+)?"
+          sources = [
+              (["proxy/go.mod"], rf"^(?:go|toolchain go)\s*{version}\s*$"),
+              (glob.glob("**/Dockerfile*", recursive=True), rf"golang:{version}"),
+              (glob.glob(".github/workflows/*.y*ml"), rf"go-version:\s*['\"]?{version}"),
+          ]
+          found = []
+          for paths, pattern in sources:
+              for path in sorted(paths):
+                  for number, line in enumerate(open(path, encoding="utf-8"), 1):
+                      for m in re.finditer(pattern, line.strip()):
+                          found.append((path, number, f"{m.group(1)}.{m.group(2)}"))
+          if not any(path == "proxy/go.mod" for path, _, _ in found):
+              print("::error file=proxy/go.mod::No go directive found.")
+              sys.exit(1)
+          lines = sorted({v for _, _, v in found})
+          for path, number, v in found:
+              print(f"{path}:{number}: Go {v}")
+          if len(lines) > 1:
+              for path, number, v in found:
+                  print(f"::error file={path},line={number}::Go {v} here; the repository "
+                        f"declares {', '.join(lines)}. Move every declaration together.")
+              sys.exit(1)
+          print(f"All {len(found)} declarations are on Go {lines[0]}.")
+          PY
+
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    needs: changes
+    # deploy.yml, release.yml and allowlist.yml can't run on a PR (they need Azure, tags or
+    # GHCR writes), so a change to them, including an action bump, is otherwise unchecked.
+    # actionlint catches syntax, expression and input errors, and runs shellcheck over
+    # every run: body.
+    if: needs.changes.outputs.workflows == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.25'
+          check-latest: true
+      - name: Install actionlint
+        # Pinned explicitly (never @latest), like govulncheck; the Go checksum database makes
+        # the version immutable. Dependabot does not track this pin: bump it by hand.
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+        env:
+          GOTOOLCHAIN: local
+      - name: Run actionlint
+        # shellcheck is preinstalled on ubuntu-latest, so actionlint picks it up.
+        run: '"$(go env GOPATH)/bin/actionlint" -color'
 
   govulncheck:
     name: Scan proxy module for reachable vulnerabilities
@@ -189,3 +345,28 @@ jobs:
             exit 0
           fi
           shellcheck "${script_files[@]}"
+
+  result:
+    name: CI result
+    runs-on: ubuntu-latest
+    # One status to require on main. The path-gated jobs above report "skipped" when they
+    # don't apply, and a skipped required check counts as passing; this job passes only when
+    # every job either succeeded or was skipped by its own condition, and fails on a failed
+    # or cancelled one (a cancelled `changes` job skips everything after it).
+    needs: [changes, proxy, app-images, mock-idp, go-toolchain, govulncheck, dotnet, bicep, shell, actionlint]
+    if: always()
+    steps:
+      - name: Check every job's result
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          results = {job: v["result"] for job, v in json.loads(os.environ["NEEDS"]).items()}
+          for job, result in sorted(results.items()):
+              print(f"{job}: {result}")
+          bad = sorted(job for job, result in results.items() if result not in ("success", "skipped"))
+          if bad:
+              print(f"::error::Not successful: {', '.join(bad)}")
+              sys.exit(1)
+          PY

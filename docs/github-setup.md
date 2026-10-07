@@ -49,3 +49,36 @@ Set these repository variables in GitHub (`Settings -> Secrets and variables -> 
   `az storage blob upload --overwrite --auth-mode login`.
 - Both workflows skip gracefully when required files or variables are missing (for forks and
   pre-WP5 branches).
+
+## 5. CI and the required check
+
+`ci.yml` runs on pull requests, on pushes to `main` and weekly. A `changes` job decides which
+jobs apply; a job that doesn't apply reports *skipped*.
+
+| Changed paths | Jobs |
+|---|---|
+| `proxy/**` | Proxy image (amd64 + arm64, as released), govulncheck, Go toolchain consistency |
+| `src/**`, `*.slnx`, `Directory.*`, `global.json`, `NuGet.config` | .NET build and test, the sample-app, control-plane and portal images (amd64 + arm64, as released) |
+| `mock-idp/**` | Mock IdP image build and token smoke test |
+| `infra/**` | Bicep build and NSG description lengths |
+| `scripts/**/*.sh` | shellcheck |
+| `.github/workflows/**` | actionlint (with shellcheck over `run:` bodies), Go toolchain consistency |
+| `.github/workflows/ci.yml` | Everything |
+
+Image jobs use the same builder actions, pins and platforms as `release.yml`, so a Dockerfile
+or action change that would break a release fails CI first. Nothing is pushed.
+
+**Go toolchain consistency.** The Go line is declared in `proxy/go.mod`, `proxy/Dockerfile`
+and every `setup-go` step. Dependabot bumps the Dockerfile tag on its own and can't bump
+`go.mod`, so the check fails a PR that moves one without the others: govulncheck and the
+release binaries must use the same Go line as the image.
+
+**What CI can't run.** `release.yml`, `deploy.yml` and `allowlist.yml` need tags, GHCR writes or
+Azure. A change to them is linted, not executed; an `azure/login` bump, for example, is
+first exercised by the next deploy.
+
+**Require `CI result`.** Make the `CI result` job the required status check for `main` in
+the repository ruleset, rather than individual jobs. A skipped required check counts as
+passing, so requiring individual path-gated jobs proves nothing. `CI result` fails when any
+job failed or was cancelled, including a cancelled `changes` job that would otherwise skip
+everything.
