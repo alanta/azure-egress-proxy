@@ -28,6 +28,7 @@ jobs:
       scripts: ${{ steps.filter.outputs.scripts }}
       workflow: ${{ steps.filter.outputs.workflow }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      images: ${{ steps.filter.outputs.images }}
       mock_idp: ${{ steps.filter.outputs.mock_idp }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -56,62 +57,32 @@ jobs:
             # Any workflow, including release/deploy/allowlist: linted, never run here.
             workflows:
               - '.github/workflows/**'
+            # The shared image build: CI builds every image with it when it changes.
+            images:
+              - '.github/workflows/images.yml'
             mock_idp:
               - 'mock-idp/**'
 
   proxy:
-    name: Build proxy image
-    runs-on: ubuntu-latest
+    name: Proxy image
     needs: changes
-    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflow == 'true'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      # The same builder setup, action pins and platforms as release.yml, so a change that
-      # would break the release image build fails here first, and a bump of these actions is
-      # exercised before it reaches a release.
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Build proxy image (amd64 and arm64, not pushed)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: proxy
-          file: proxy/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: false
+    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.images == 'true' || needs.changes.outputs.workflow == 'true'
+    # images.yml is the build release.yml pushes; here it builds without pushing.
+    uses: ./.github/workflows/images.yml
+    with:
+      push: false
+      images: '["proxy"]'
 
   app-images:
-    name: Build ${{ matrix.image }} image
-    runs-on: ubuntu-latest
+    name: App images
     needs: changes
     # release.yml publishes these three images; until this job, CI never built them, so a
     # base-image bump or a Dockerfile change could pass CI and fail the release.
-    if: needs.changes.outputs.dotnet == 'true' || needs.changes.outputs.workflow == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: sample-app
-            dockerfile: src/SampleApp/Dockerfile
-          - image: control-plane
-            dockerfile: src/ControlPlane/Dockerfile
-          - image: portal
-            dockerfile: src/Portal/Dockerfile
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      # Same setup as the proxy job above: mirrors release.yml.
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Build image (amd64 and arm64, not pushed)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: false
+    if: needs.changes.outputs.dotnet == 'true' || needs.changes.outputs.images == 'true' || needs.changes.outputs.workflow == 'true'
+    uses: ./.github/workflows/images.yml
+    with:
+      push: false
+      images: '["sample-app", "control-plane", "portal"]'
 
   mock-idp:
     name: Build and smoke-test mock IdP image
