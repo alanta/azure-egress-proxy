@@ -69,10 +69,12 @@ jobs:
           fi
 
           version="${release_tag#v}"
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "publish_release=$publish_release" >> "$GITHUB_OUTPUT"
-          echo "push_images=$push_images" >> "$GITHUB_OUTPUT"
+          {
+            echo "release_tag=$release_tag"
+            echo "version=$version"
+            echo "publish_release=$publish_release"
+            echo "push_images=$push_images"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
