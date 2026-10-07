@@ -30,6 +30,7 @@ jobs:
       workflows: ${{ steps.filter.outputs.workflows }}
       images: ${{ steps.filter.outputs.images }}
       mock_idp: ${{ steps.filter.outputs.mock_idp }}
+      ci_scripts: ${{ steps.filter.outputs.ci_scripts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -62,6 +63,9 @@ jobs:
               - '.github/workflows/images.yml'
             mock_idp:
               - 'mock-idp/**'
+            # The checks CI runs, kept as scripts so they also run locally before a PR.
+            ci_scripts:
+              - 'scripts/ci/**'
 
   proxy:
     name: Proxy image
@@ -90,82 +94,26 @@ jobs:
     needs: changes
     # Local-dev only and never released, but its base image and the inline PyJWT pin still
     # move, and nothing else would notice them breaking.
-    if: needs.changes.outputs.mock_idp == 'true' || needs.changes.outputs.workflow == 'true'
+    if: needs.changes.outputs.mock_idp == 'true' || needs.changes.outputs.ci_scripts == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Build and start the mock IdP
-        run: |
-          docker build -t mock-idp:ci mock-idp/
-          docker run -d --name mock-idp -p 127.0.0.1:8080:8080 mock-idp:ci
-          for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8080/jwks >/dev/null 2>&1 && exit 0
-            sleep 1
-          done
-          echo "::error::The mock IdP did not serve /jwks within 30 seconds."
-          exit 1
-      - name: Issue a token and verify it against the JWKS
-        # Signing and verification both run inside the image, so this exercises the
-        # Python base image together with PyJWT[crypto], the way the local stack uses them.
-        run: |
-          token=$(curl -fsS 'http://127.0.0.1:8080/token?appid=ci-smoke')
-          docker exec -i -e TOKEN="$token" mock-idp python - <<'PY'
-          import json, os, urllib.request
-          import jwt
-          from jwt.algorithms import RSAAlgorithm
-          keys = json.load(urllib.request.urlopen("http://127.0.0.1:8080/jwks"))["keys"]
-          key = RSAAlgorithm.from_jwk(json.dumps(keys[0]))
-          claims = jwt.decode(os.environ["TOKEN"], key, algorithms=["RS256"], audience="egress-proxy")
-          assert claims["appid"] == "ci-smoke", claims
-          print("token verified for appid", claims["appid"])
-          PY
-      - name: Show mock IdP logs
-        if: failure()
-        run: docker logs mock-idp || true
+      - name: Build, start and smoke-test the mock IdP
+        run: scripts/ci/smoke-mock-idp.sh
 
   go-toolchain:
     name: Check Go toolchain consistency
     runs-on: ubuntu-latest
     needs: changes
-    # The Go line is declared in go.mod, the proxy Dockerfile and every setup-go step.
-    # Dependabot bumps the Dockerfile tag on its own (and cannot bump go.mod at all), so
-    # a PR could ship the container on one Go line while govulncheck and the release
-    # binaries use another. This fails that PR instead of letting the lines drift apart.
-    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflows == 'true'
+    # Why this check exists: see scripts/ci/check-go-toolchain.py.
+    if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.workflows == 'true' || needs.changes.outputs.ci_scripts == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Compare Go versions across go.mod, Dockerfiles and workflows
-        run: |
-          python3 - <<'PY'
-          import glob, re, sys
-          version = r"(\d+)\.(\d+)(?:\.\d+)?"
-          sources = [
-              (["proxy/go.mod"], rf"^(?:go|toolchain go)\s*{version}\s*$"),
-              (glob.glob("**/Dockerfile*", recursive=True), rf"golang:{version}"),
-              (glob.glob(".github/workflows/*.y*ml"), rf"go-version:\s*['\"]?{version}"),
-          ]
-          found = []
-          for paths, pattern in sources:
-              for path in sorted(paths):
-                  for number, line in enumerate(open(path, encoding="utf-8"), 1):
-                      for m in re.finditer(pattern, line.strip()):
-                          found.append((path, number, f"{m.group(1)}.{m.group(2)}"))
-          if not any(path == "proxy/go.mod" for path, _, _ in found):
-              print("::error file=proxy/go.mod::No go directive found.")
-              sys.exit(1)
-          lines = sorted({v for _, _, v in found})
-          for path, number, v in found:
-              print(f"{path}:{number}: Go {v}")
-          if len(lines) > 1:
-              for path, number, v in found:
-                  print(f"::error file={path},line={number}::Go {v} here; the repository "
-                        f"declares {', '.join(lines)}. Move every declaration together.")
-              sys.exit(1)
-          print(f"All {len(found)} declarations are on Go {lines[0]}.")
-          PY
+        run: python3 scripts/ci/check-go-toolchain.py
 
   actionlint:
     name: Lint workflows
@@ -249,51 +197,18 @@ jobs:
     name: Validate Bicep files
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.workflow == 'true'
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.ci_scripts == 'true' || needs.changes.outputs.workflow == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Build Bicep templates
-        run: |
-          if [ ! -d infra ]; then
-            echo "::notice::infra/ not present yet; skipping Bicep validation."
-            exit 0
-          fi
-          if ! command -v az >/dev/null 2>&1; then
-            echo "::error::Azure CLI is required for az bicep build."
-            exit 1
-          fi
-          mapfile -t bicep_files < <(find infra -type f -name '*.bicep' | sort)
-          if [ "${#bicep_files[@]}" -eq 0 ]; then
-            echo "::notice::No .bicep files found under infra/."
-            exit 0
-          fi
-          for file in "${bicep_files[@]}"; do
-            az bicep build --file "$file"
-          done
+        run: scripts/ci/build-bicep.sh
 
       - name: Check NSG rule description lengths
-        # ARM rejects a security rule description over 140 characters, and `az bicep build` does
-        # NOT catch it — it is preflight validation, not compilation. Without this check the
-        # failure surfaces twenty minutes into a deployment, after the resource groups, the
-        # registry and the scale set have already been created. Cheap here, expensive there.
-        run: |
-          if [ ! -d infra ]; then exit 0; fi
-          python3 - <<'PY'
-          import glob, re, sys
-          limit, bad = 140, 0
-          for path in sorted(glob.glob('infra/**/*.bicep', recursive=True)):
-              src = open(path, encoding='utf-8').read()
-              for m in re.finditer(r"description:\s*'((?:[^'\\]|\\.)*)'", src):
-                  value = m.group(1).replace("\\'", "'")
-                  if len(value) > limit:
-                      line = src[:m.start()].count('\n') + 1
-                      print(f"::error file={path},line={line}::NSG rule description is "
-                            f"{len(value)} chars, limit is {limit}")
-                      bad += 1
-          sys.exit(1 if bad else 0)
-          PY
+        # ARM rejects a description over 140 characters and `az bicep build` doesn't catch
+        # it; see scripts/ci/check-nsg-descriptions.py.
+        run: python3 scripts/ci/check-nsg-descriptions.py
 
   shell:
     name: Shell script lint
@@ -305,17 +220,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run shellcheck on scripts
-        run: |
-          if [ ! -d scripts ]; then
-            echo "::notice::scripts/ not present yet; skipping shellcheck."
-            exit 0
-          fi
-          mapfile -t script_files < <(find scripts -maxdepth 1 -type f -name '*.sh' | sort)
-          if [ "${#script_files[@]}" -eq 0 ]; then
-            echo "::notice::No shell scripts found under scripts/."
-            exit 0
-          fi
-          shellcheck "${script_files[@]}"
+        run: scripts/ci/shellcheck.sh
 
   result:
     name: CI result

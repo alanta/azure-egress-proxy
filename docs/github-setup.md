@@ -64,7 +64,13 @@ jobs apply; a job that doesn't apply reports *skipped*.
 | `scripts/**/*.sh` | shellcheck |
 | `.github/workflows/**` | actionlint (with shellcheck over `run:` bodies), Go toolchain consistency |
 | `.github/workflows/images.yml` | All four image builds |
+| `scripts/ci/**` | The jobs that run those scripts: Go toolchain, mock IdP, Bicep, shellcheck |
 | `.github/workflows/ci.yml` | Everything |
+
+Checks with logic of their own live in `scripts/ci/` and CI calls them, so you can run them
+before opening a PR. [AGENTS.md](../AGENTS.md) § Commands lists them. Only what depends on
+the workflow run itself stays inline: the `CI result` aggregation and `images.yml`'s input
+checks.
 
 **One image build.** `images.yml` is a reusable workflow that defines how the proxy,
 sample-app, control-plane and portal images are built (amd64 + arm64). `ci.yml` calls it with

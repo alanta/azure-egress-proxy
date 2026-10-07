@@ -60,6 +60,7 @@ Two documents are easy to miss and answer most "is this a bug?" questions:
 | `mock-idp/` | Local stand-in for the Entra token endpoint and JWKS (Python) |
 | `allowlist/` | The allowlist document and the ruleset document, each with a JSON Schema |
 | `infra/`, `scripts/` | Bicep (AVM modules) and the deploy/teardown/demo/identity scripts |
+| `scripts/ci/` | The checks CI runs, as scripts you can run locally before opening a PR |
 | `openspec/` | Spec-driven change workflow; `specs/` holds `control-plane-api` and `ruleset-model` |
 
 ## Invariants
@@ -127,6 +128,13 @@ dotnet restore AzureEgressProxy.slnx --force-evaluate
 
 # Go proxy
 cd proxy && go build ./... && go test ./...
+
+# CI checks, runnable locally before a PR (CI calls the same scripts)
+python3 scripts/ci/check-go-toolchain.py      # one Go line in go.mod, Dockerfiles, workflows
+python3 scripts/ci/check-nsg-descriptions.py  # NSG descriptions ARM would reject
+scripts/ci/build-bicep.sh                     # needs the Azure CLI
+scripts/ci/shellcheck.sh                      # needs shellcheck
+scripts/ci/smoke-mock-idp.sh                  # needs Docker or Podman; MOCK_IDP_PORT=… to move off 8080
 
 # Local end-to-end stack, then exercise allow/deny
 dotnet run --project src/AppHost/AppHost.csproj
