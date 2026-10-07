@@ -58,9 +58,11 @@ jobs:
             fi
           fi
 
-          echo "run_deploy=$run_deploy" >> "$GITHUB_OUTPUT"
-          echo "run_teardown=$run_teardown" >> "$GITHUB_OUTPUT"
-          echo "app_url=$DEMO_APP_URL" >> "$GITHUB_OUTPUT"
+          {
+            echo "run_deploy=$run_deploy"
+            echo "run_teardown=$run_teardown"
+            echo "app_url=$DEMO_APP_URL"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Azure login (OIDC)
         if: steps.preflight.outputs.run_deploy == 'true'
