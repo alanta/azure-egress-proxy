@@ -1,11 +1,15 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Central versions also govern packages a project only gets transitively. Without
+         this, a transitive package resolves to whatever its parents ask for, so a patched
+         version declared below would not reach every project that uses it. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <!-- Every NuGet version in the repo lives here. Projects reference packages without a
        Version attribute; add the PackageVersion entry here first. Note that AppHost's
-       Aspire packages are supplied implicitly by Aspire.AppHost.Sdk/13.4.6 and are
-       deliberately absent below - that SDK version is pinned in AppHost.csproj. -->
+       Aspire packages are supplied implicitly by Aspire.AppHost.Sdk and are deliberately
+       absent below - that SDK version is pinned in AppHost.csproj. -->
   <ItemGroup>
     <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />

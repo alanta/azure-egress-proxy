@@ -136,6 +136,8 @@ Go has the same guarantee through `go.sum`, which records a hash for every modul
 ### 2.2 One version per package
 
 .NET package versions live only in `Directory.Packages.props` (Central Package Management).
+Transitive pinning is on, so a central version also governs projects that only get the package
+transitively, not just those that reference it directly.
 
 - Do not put a `Version` attribute on a `PackageReference` in a project file.
 - Add the `PackageVersion` entry centrally first, then reference the package.
@@ -148,7 +150,8 @@ one project silently coexists with a vulnerable one in another, and neither an a
 scanner report tells you which is deployed.
 
 Aspire packages are the documented exception — they come implicitly from
-`Aspire.AppHost.Sdk` and are versioned by the `Sdk` attribute in `AppHost.csproj`.
+`Aspire.AppHost.Sdk` and are versioned by the `Sdk` attribute in `AppHost.csproj`. The
+exception stops there: a dependency they pull in that has a central version resolves to it.
 
 ### 2.3 Responding to a vulnerability report
 
