@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM python:3.14-alpine
 RUN pip install --no-cache-dir "PyJWT[crypto]==2.15.0"
 RUN addgroup -S app && adduser -S -G app app
 COPY app.py /app.py
