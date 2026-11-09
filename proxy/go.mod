@@ -1,22 +1,23 @@
 module github.com/alanta/azure-egress-proxy/proxy
 
-go 1.25.14
+go 1.26.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
-	github.com/MicahParks/keyfunc/v3 v3.8.2
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.3
+	github.com/MicahParks/keyfunc/v3 v3.9.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/sirupsen/logrus v1.10.2
 	github.com/stripe/smokescreen v0.1.0
 )
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/storage/internal v0.1.0 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 // indirect
 	github.com/DataDog/datadog-go v4.8.3+incompatible // indirect
-	github.com/MicahParks/jwkset v0.11.3 // indirect
+	github.com/MicahParks/jwkset v0.11.4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/apache/arrow-go/v18 v18.7.0 // indirect
 	github.com/armon/go-proxyproto v0.1.0 // indirect
@@ -42,12 +43,12 @@ require (
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/stripe/goproxy v0.0.0-20260826103935-0cd07c409a76 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/urfave/cli.v1 v1.20.0 // indirect
